@@ -1,64 +1,80 @@
-from mp_api.client import MPRester
-from pymatgen.io.cif import CifWriter
-import re
-import os
-import numpy as np
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder, label_binarize
-from itertools import cycle
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.svm import SVC
-from sklearn.manifold import TSNE
-from sklearn.decomposition import PCA
-from sklearn.cluster import KMeans
-from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import precision_recall_curve, auc
 import os
 import shap
-import re
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.metrics import mean_squared_error
-from sklearn.metrics import roc_curve, roc_auc_score, accuracy_score, confusion_matrix, ConfusionMatrixDisplay
-import csv
-from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import confusion_matrix
 from sklearn.metrics import roc_curve, auc
-import seaborn as sns
 import matplotlib.pyplot as plt
-from sklearn.naive_bayes import GaussianNB
 import joblib
-
 from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import cross_val_score
-from matplotlib.lines import Line2D
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, roc_auc_score
 from sklearn.feature_selection import RFE
-def train_rf(data_file_name,  save_model, paramater_selection, cv_number, rfe_label, plot_show,shap_or_not):
+from imblearn.over_sampling import RandomOverSampler
+import sys
+from utilies import cif_reader
+from itertools import combinations
+from collections import Counter
+from utilies import compute_entropy
+from imblearn.over_sampling import RandomOverSampler, SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from sklearn.metrics import f1_score
+from sklearn.preprocessing import StandardScaler
+import time
+
+def train_rf(data_file_name, save_model, sample_balance, paramater_selection, cv_number, rfe_label, pr_auc, cm_or_not, fi, cross_v, threshold):
+    total_start = time.time()
+
     #loading  and splitting the data
     df = pd.read_csv(data_file_name)  #first line is feature name
-    X = df.iloc[:, :-3].values
+    df = df.dropna()
+
+    X = df.iloc[:, :-1].values
     y = df.iloc[:, -1].values
+
+
+    y = np.where(y > threshold, 'c',
+                 np.where((y > 0) & (y <= threshold), 'b', 'a'))
+
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
     class_counts = pd.Series(y).value_counts()
 
-    # 打印每个类别的数量
+
+
+    print('xxxxxxxxxxxxxxxxxxxxxxxxx count of each catergray xxxxxxxxxxxxxxxxxxxxxxxx')
     print(class_counts)
-    feature_names = df.columns[:-3]
+    if sample_balance == 'oversampling':
+        ros = RandomOverSampler(random_state=42)
+        X, y = ros.fit_resample(X, y)
+
+    elif sample_balance == 'undersampling':
+        rus = RandomUnderSampler(random_state=42)
+        X, y = rus.fit_resample(X, y)
+
+    elif sample_balance == 'smote':
+        smote = SMOTE(random_state=42)
+        X, y = smote.fit_resample(X, y)
+
+    # 打印平衡后的类别数
+    if sample_balance in ['oversampling', 'undersampling', 'smote']:
+        class_counts_resampled = pd.Series(y).value_counts()
+        print('xxxxxxxxxxxxxxxxxxxxxxxxx count of each category (after balancing) xxxxxxxxxxxxxxxxxxxxxxxx')
+        print(class_counts_resampled)
+
+    feature_names = df.columns[:-1]
     X_train, X_test_1, y_train, y_test_1 = train_test_split(X, y, test_size=0.2, random_state=42,stratify=y)
     X_train_1, X_val_1, y_train_1, y_val_1 = train_test_split(X_train, y_train, test_size=0.25, random_state=42, stratify=y_train)
-    print('the length of the training set  is {}'.format(X_train_1.shape[0]))
-    print('the length of the test set is {}'.format(X_test_1.shape[0]))
-    print('the length of the val set is {}'.format(X_val_1.shape[0]))
+
 
     #selection of hyper_paramater
     if paramater_selection == True:
@@ -76,6 +92,7 @@ def train_rf(data_file_name,  save_model, paramater_selection, cv_number, rfe_la
         grid_search.fit(X_train_1, y_train_1)
         best_params = grid_search.best_params_
         print("Best parameters found by grid search:", best_params)
+        sys.exit()
     else:
         model = RandomForestClassifier(n_estimators=100,
                                    criterion='gini',
@@ -97,206 +114,235 @@ def train_rf(data_file_name,  save_model, paramater_selection, cv_number, rfe_la
         rfe.fit(X_train_1, y_train_1)
         selected_features = rfe.support_
         feature_ranking = rfe.ranking_
-        print(feature_ranking)
+        print('RFE RANGKING IS {}'.format(feature_ranking))
         X_train_1 = X_train_1[:,selected_features]
         feature_names = feature_names[selected_features]
         X_test_1 = X_test_1[:,selected_features]
+        X = X[:,selected_features]
+    t0 = time.time()
+
 
     model.fit(X_train_1, y_train_1)
+    print(f"RF training time: {time.time() - t0:.4f} seconds")
     y_score = model.predict_proba(X_test_1)
     predictions = model.predict(X_test_1)
     all_predictions = model.predict(X)
+    y_score_all = model.predict_proba(X)
 
-    # label conversion
-    true_label = np.where(y_test_1 == 'a', 'Stable',
-                              np.where(y_test_1 == 'b', 'Metastable',
-                                       np.where(y_test_1 == 'c', 'Unstable', y_test_1)))
-    all_true_label = np.where(y == 'a', 'Stable',
-                              np.where(y == 'b', 'Metastable',
-                                       np.where(y == 'c', 'Unstable', y)))
-    predicted_label = np.where(predictions == 'a', 'Stable',
-                                   np.where(predictions == 'b', 'Metastable',
-                                            np.where(predictions == 'c', 'Unstable', predictions)))
-    all_predicted_label = np.where(all_predictions == 'a', 'Stable',
-                                   np.where(all_predictions == 'b', 'Metastable',
-                                            np.where(all_predictions == 'c', 'Unstable', all_predictions)))
 
-    #computing accuracy
-    accuracy = accuracy_score(true_label, predicted_label)
-    print("Accuracy:", accuracy)
     plt.rcParams['font.family'] = 'Arial'
-    all_accuracy = accuracy_score(all_true_label, all_predicted_label)
-    print("Accuracy on the whole dataset:", all_accuracy)
+    classes = ['a', 'b', 'c']
+    label_dict = {'a': 'Stable', 'b': 'Metastable', 'c': 'Unstable'}
+    #computing accuracy
+
+    accuracy = accuracy_score(y_test_1, predictions)
+    print('test accuracy is {}'.format(accuracy))
+    t0 = time.time()
+    all_accuracy = accuracy_score(y, all_predictions)
+    print('all accuracy is {}'.format(all_accuracy))
+    print(f"predicting all 180 k materials stability: {time.time() - t0:.4f} seconds")
+    #f1 score
+    f1_per_class = f1_score(y, all_predictions, average=None)  # 每个类别
+    f1_macro = f1_score(y, all_predictions, average="macro")
+    f1_weighted = f1_score(y, all_predictions, average="weighted")
+    #confusion matrix
+    cm = confusion_matrix(y, all_predictions, labels=['a', 'b', 'c'])
+
+    #auc
+    present_classes = [cls for cls in classes if cls in y]  # only 2 classed when ehull = 0
+    if len(present_classes) == 2:
+        y_true_bin = label_binarize(y, classes=present_classes)  # shape (n_samples, 2)
+        # 取正类列的概率
+        y_score_pos = y_score_all[:, 1]  # 第二列是正类概率
+        auc_per_class = roc_auc_score(y_true_bin, y_score_pos)
+        auc_macro = auc_per_class
+    if len(present_classes) > 2:
+        y_true_bin = label_binarize(y, classes=present_classes)
 
 
 
-    #pr曲线
-    label_dict = {'a':'Stable','b':'Metastable', 'c': 'Unstable'}
-    plt.figure(figsize=(8, 7))
-    for i, label in enumerate(model.classes_):
-        precision, recall, _ = precision_recall_curve(y_test_1 == label, y_score[:, i])
-        plt.plot(recall, precision, label=f'{label_dict[label]} (AUC = {-np.trapz(precision, recall):.2f})')
+        auc_per_class = roc_auc_score(y_true_bin, y_score_all, average=None, multi_class="ovr")
+        auc_macro = roc_auc_score(y_true_bin, y_score_all, average="macro", multi_class="ovr")
 
-    plt.xlabel('Recall', weight='bold', fontsize=22)
-    plt.ylabel('Precision', weight='bold', fontsize=22)
-    plt.xticks(fontsize=14)
-    plt.yticks(fontsize=14)
-    plt.legend(loc="lower left", frameon=False, prop={'weight': 'bold', 'size': '16'})
-    ax = plt.gca()
-    for spine in ax.spines.values():
-        spine.set_linewidth(2.5)
-    plt.savefig('pr_curve.jpg', dpi = 300)
-    if plot_show:
-        plt.show()
+    #save stastic results
+    results = {
+        'test accuracy':accuracy,
+        'all accuracy': all_accuracy,
+        "f1_macro": f1_macro,
+        "f1_weighted": f1_weighted,
+        "auc_macro": auc_macro,
+        "confusion_matrix": cm.tolist()  #cm[i][j] represents the number of samples whose true class is i and that are predicted as class j.
+    }
 
-    # Compute ROC curve and ROC area for each class
-    y_test_bin = label_binarize(y_test_1, classes=['a', 'b', 'c'])
-    n_classes = y_test_bin.shape[1]
-    fpr = dict()
-    tpr = dict()
-    roc_auc = dict()
-    for i in range(n_classes):
-        fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], y_score[:, i])
-        roc_auc[i] = roc_auc_score(y_test_bin[:, i], y_score[:, i])
-    label_dict = {1: 'Stable',
-                      2: 'Metastable',
-                      3: 'Unstable'}
-    plt.figure(figsize=(8, 7))
-    colors = ['blue', 'green', 'red']
-    for i, color in zip(range(n_classes), colors):
-        plt.plot(fpr[i], tpr[i], color=color, lw=2,
-                     label=f' {label_dict[i + 1]} (AUC = {roc_auc[i]:.2f})')
-    plt.plot([0, 1], [0, 1], 'k--', lw=2)
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False positive rate', weight='bold', fontsize=16)
-    plt.ylabel('True positive rate', weight='bold', fontsize=16)
-    plt.xticks(fontsize=14)
-    plt.yticks(fontsize=14)
-    plt.legend(loc="lower right", frameon=False, prop={'weight': 'bold', 'size': '16'})
-    ax = plt.gca()
-    for spine in ax.spines.values():
-        spine.set_linewidth(2.5)
-    plt.savefig('roc_curve.jpg', dpi=300)
-    if plot_show == True:
-        plt.show()
+    for i, cls in enumerate(present_classes):
+        results[f"f1_{cls}"] = f1_per_class[i]
+        if len(present_classes) == 2:
+            results[f"auc_{cls}"] = auc_per_class
+        else:
+            results[f"auc_{cls}"] = auc_per_class[i]
+
+
+
+    if pr_auc == True:
+        # pr data saving
+        pr_data = []
+        max_length_pr = 0
+        classes = list(label_dict.keys())
+        pr_dict = {label: {'Recall': [], 'Precision': [], 'Threshold': []} for label in classes}
+        for i, label in enumerate(classes):
+            precision, recall, thresholds_pr = precision_recall_curve(y_test_1 == label, y_score[:, i])
+            pr_auc = auc(recall, precision)
+            pr_dict[label]['Recall'] = recall.tolist()
+            pr_dict[label]['Precision'] = precision.tolist()
+            pr_dict[label]['Threshold'] = thresholds_pr.tolist()
+            pr_dict[label]['AUC'] = pr_auc
+            max_length_pr = max(max_length_pr, len(recall))
+
+        for label in classes:
+            while len(pr_dict[label]['Recall']) < max_length_pr:
+                pr_dict[label]['Recall'].append(np.nan)
+            while len(pr_dict[label]['Precision']) < max_length_pr:
+                pr_dict[label]['Precision'].append(np.nan)
+            while len(pr_dict[label]['Threshold']) < max_length_pr:
+                pr_dict[label]['Threshold'].append(np.nan)
+
+        for i in range(max_length_pr):
+            row = []
+            for label in classes:
+                row.append(pr_dict[label]['Recall'][i])
+                row.append(pr_dict[label]['Precision'][i])
+                row.append(pr_dict[label]['Threshold'][i])
+            row.append([pr_dict[label]['AUC'] for label in classes])
+            pr_data.append(row)
+
+        columns_pr = []
+        for label in classes:
+            columns_pr.append(f'{label_dict[label]} Recall')
+            columns_pr.append(f'{label_dict[label]} Precision')
+            columns_pr.append(f'{label_dict[label]} Threshold')
+        columns_pr.append('AUC')
+
+        df_pr = pd.DataFrame(pr_data, columns=columns_pr)
+        df_pr.to_csv('pr_curve.csv', index=False)
+
+        # roc data save
+
+        y_test_bin = label_binarize(y_test_1, classes=classes)
+        roc_data = []
+        roc_dict = {label: {'FPR': [], 'TPR': [], 'Threshold': [], 'auc': []} for label in classes}
+        max_length_roc = 0
+        for i, label in enumerate(classes):
+            fpr, tpr, thresholds = roc_curve(y_test_bin[:, i], y_score[:, i])
+            auc_value = roc_auc_score(y_test_bin[:, i], y_score[:, i])
+
+            roc_dict[label]['FPR'] = fpr.tolist()
+            roc_dict[label]['TPR'] = tpr.tolist()
+            roc_dict[label]['Threshold'] = thresholds.tolist()
+            roc_dict[label]['auc'] = auc_value
+            max_length_roc = max(max_length_roc, len(fpr))
+        for label in classes:
+            while len(roc_dict[label]['FPR']) < max_length_roc:
+                roc_dict[label]['FPR'].append(np.nan)
+            while len(roc_dict[label]['TPR']) < max_length_roc:
+                roc_dict[label]['TPR'].append(np.nan)
+            while len(roc_dict[label]['Threshold']) < max_length_roc:
+                roc_dict[label]['Threshold'].append(np.nan)
+
+        for i in range(max_length_roc):
+            row = []
+            for label in classes:
+                row.append(roc_dict[label]['FPR'][i])
+                row.append(roc_dict[label]['TPR'][i])
+                row.append(roc_dict[label]['Threshold'][i])
+            row.append([roc_dict[label]['auc'] for label in classes])
+            roc_data.append(row)
+
+        # 创建DataFrame
+        columns_roc = []
+        for label in classes:
+            columns_roc.append(f'{label_dict[label]} FPR')
+            columns_roc.append(f'{label_dict[label]} TPR')
+            columns_roc.append(f'{label_dict[label]} Threshold')
+        columns_roc.append('AUC')
+        df_roc = pd.DataFrame(roc_data, columns=columns_roc)
+        df_roc.to_csv('roc_curve.csv', index=False)
+
     #chart
-    report = classification_report(y_test_1, predictions, output_dict=True)
+    report = classification_report(y, all_predictions, output_dict=True)
     report_df = pd.DataFrame(report).transpose()
-    print(report)
-
-    #
-    # sampled_indices = np.random.choice(X_train_1.shape[0], 200, replace=False)
-    # X_train_1_selected = X_train_1[sampled_indices]
-    #
-    # y_train_1_selected = y_train_1[sampled_indices]
-    #
-    # pca = PCA(n_components=2)
-    # X_train_2d = pca.fit_transform(X_train_1)
-    #
-    # encoder = LabelEncoder()
-    # y_train_1_encoded = encoder.fit_transform(y_train_1)
-    #
-    # model.fit(X_train_2d, y_train_1_encoded)
-    # h = 0.1
-    # # x_min, x_max = X_train_2d[:, 0].min() - 1, X_train_2d[:, 0].max() + 1
-    # # y_min, y_max = X_train_2d[:, 1].min() - 1, X_train_2d[:, 1].max() + 1
-    #
-    # x_min, x_max = X_train_2d[:300, 0].min() - 1, X_train_2d[:300, 0].max() + 1
-    # y_min, y_max = X_train_2d[:300, 1].min() - 1, X_train_2d[:300, 1].max() + 1
-    #
-    # xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
-    #
-    # Z = model.predict(np.c_[xx.ravel(), yy.ravel()])
-    # Z = Z.reshape(xx.shape)
-    #
-    # plt.contourf(xx, yy, Z, alpha=0.8)
-    # plt.scatter(X_train_2d[:, 0], X_train_2d[:, 1], c=y_train_1_encoded, edgecolors='k', marker='o', s=50, cmap=plt.cm.coolwarm)
-    # plt.xticks(fontsize=14)
-    # plt.yticks(fontsize=14)
-    #
-    # legend_elements = [
-    #     Line2D([0], [0], marker='o', color='w', label='Class A', markerfacecolor=plt.cm.coolwarm(0 / 2), markersize=10),
-    #     Line2D([0], [0], marker='o', color='w', label='Class B', markerfacecolor=plt.cm.coolwarm(1 / 2), markersize=10),
-    #     Line2D([0], [0], marker='o', color='w', label='Class C', markerfacecolor=plt.cm.coolwarm(2 / 2), markersize=10),
-    # ]
-    #
-    # plt.legend(handles=legend_elements, loc="lower right", frameon=False, fontsize=12)
-    #
-    # # plt.legend(loc="lower right", frameon=False, prop={'weight': 'bold', 'size': '16'})
-    # plt.show()
+    print(report_df)
 
 
-
-
-
-    # SHAP Analysis
-    if shap_or_not == True:
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_train_1)
-
-        # for i, class_name in enumerate(['Class a', 'Class b', 'Class c']):  # 用实际类别名称
-        #     print(f"SHAP Summary Plot for {class_name}")
-        #
-        #     shap.summary_plot(shap_values[:,:,i], X_train_1, feature_names = feature_names)
-        #     plt.show()
-    # for i, class_name in enumerate(['Class a', 'Class b', 'Class c']):  # 用实际类别名称
-    #     print(f"SHAP Summary Plot for {class_name}")
-    #     if plot_show == True:
-    #         shap.summary_plot(shap_values[i], X_train_1, feature_names=feature_names)
-
-    # for feature_idx in range(X_train_1.shape[1]):
-    #     if feature_idx >= shap_values[0].shape[1]:
-    #         print(f"Skipping feature {feature_names[feature_idx]} as it is out of bounds in shap_values.")
-    #         continue
-    #     print(f"Dependence plot for feature: {feature_names[feature_idx]}")
-    #     if plot_show:
-    #         shap.dependence_plot(feature_idx, shap_values[0], X_train_1, feature_names=feature_names)
 
 
 
     #confusion matrix
-    cm = confusion_matrix(true_label, predicted_label, labels=['Stable', 'Metastable', 'Unstable'])
-    cm_percentage = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm_percentage, display_labels=['Stable', 'Metastable', 'Unstable'])
-    fig, ax = plt.subplots(figsize=(10, 7), dpi=400)
-    disp.plot(cmap=plt.cm.Blues, values_format='.1f', ax=ax)
-    ax.set_xticklabels([label.get_text() for label in ax.get_xticklabels()], fontweight='bold', color='black')
-    ax.set_yticklabels([label.get_text() for label in ax.get_yticklabels()], fontweight='bold', color='black')
-    # plt.savefig('confusion_matrix.png', bbox_inches='tight')
-    # ax.set_xlabel('Predicted Label', fontweight='bold')
-    # ax.set_ylabel('True Label', fontweight='bold')
-    if plot_show == True:
-        plt.show()
+    if cm_or_not == True:
+        plt.rcParams['font.family'] = 'Arial'
+        cm_percentage = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm_percentage,
+                                      display_labels=['Stable', 'Metastable', 'Unstable'])
+
+        plt.figure(figsize=(9, 7))
+        ax = plt.gca()
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.5)
+
+        disp.plot(cmap=plt.cm.Blues, values_format='.1f', ax=ax)
+        ax.set_xticklabels([label.get_text() for label in ax.get_xticklabels()], fontweight='bold', color='black',
+                           size='20')
+        ax.set_yticklabels([label.get_text() for label in ax.get_yticklabels()], fontweight='bold', color='black',
+                           size='20')
+
+        for text in ax.texts:
+            text.set_fontsize(20)
+
+        plt.tight_layout()
+
+
+        plt.savefig('confusion_matrix.png', bbox_inches='tight', dpi=400)
+
+
 
     # feature importance
-    feature_importances = model.feature_importances_
-    importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': feature_importances})
-    importance_df = importance_df.sort_values(by='Importance', ascending=False)
-    print(importance_df)
+    if fi == True:
+        feature_importances = model.feature_importances_
+        importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': feature_importances})
+        importance_df = importance_df.sort_values(by='Importance', ascending=False)
+        print(importance_df)
 
     #cross validation
-    X_cv = X[:, selected_features] if rfe_label else X
-    for i in cv_number:
-        cv_scores = cross_val_score(model, X_cv, y, cv=i, scoring='accuracy')
-        print('{} fold cross validation scores:{}'.format(i,cv_scores))
-        print("Average cross-validation score and std: {},{}".format(np.mean(cv_scores), np.std(cv_scores)) )
-        print("cross-validation std:", np.std(cv_scores))
+    if cross_v == True:
+        X_cv = X
+        for i in cv_number:
+            cv_scores = cross_val_score(model, X_cv, y, cv=i, scoring='accuracy')
+            print('{} fold cross validation scores:{}'.format(i,cv_scores))
+            print("Average cross-validation score and std: {},{}".format(np.mean(cv_scores), np.std(cv_scores)) )
+
+    errors = (y != all_predictions)
+    error_rate = np.mean(errors)
+    print(error_rate)
+
 
     #save model
     if save_model == True:
-        joblib_file = 'random_forest_model' + data_file_name.split('/')[-1] +'622' + '.pkl'
+        joblib_file = 'RF_model'  +str(threshold) + '.pkl'
         joblib.dump(model, joblib_file)
         print(f"Model saved as {joblib_file}")
     print('xxxxxxxxxxxxxxxxxxxxxxxxxxxx training was done xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
-    return model
+    return model, results, accuracy, all_accuracy
 
 
 model_considered =['knn', 'dt','gbt', 'lr', 'nb']
-def train_other(data_file_name, save_model, model_type):
+def train_other(data_file_name,  model_type, cm_or_not, cv_or_not, threshold):
     df = pd.read_csv(data_file_name)
     X = df.iloc[:, :-1].values
     y = df.iloc[:, -1].values
+    y = np.where(y > threshold, 'c',
+                 np.where((y > 0) & (y <= threshold), 'b', 'a'))
+
+    smote = SMOTE(random_state=42)
+    X, y = smote.fit_resample(X, y)
 
     if model_type == 'knn':
         model = KNeighborsClassifier(n_neighbors=5, algorithm='auto')
@@ -313,7 +359,7 @@ def train_other(data_file_name, save_model, model_type):
                                                         stratify=y)
     X_train_1, X_val, y_train_1, y_val = train_test_split(X_train, y_train, test_size=0.25, random_state=42, stratify=y_train)
     model.fit(X_train_1, y_train_1)
-    y_score = model.predict_proba(X_test_1)
+
 
     predictions = model.predict(X)
 
@@ -326,250 +372,194 @@ def train_other(data_file_name, save_model, model_type):
                             np.where(predictions == 'c', 'Unstable', predictions)))
 
     accuracy = accuracy_score(true_label, predicted_label)
-
-
     print(f"Accuracy of {model_type}:", accuracy)
+    if cm_or_not == True:
+        plt.rcParams['font.family'] = 'Arial'
+        cm = confusion_matrix(true_label, predicted_label, labels=['Stable', 'Metastable', 'Unstable'])
+        cm_percentage = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm_percentage,
+                                      display_labels=['Stable', 'Metastable', 'Unstable'])
+        plt.figure(figsize=(9, 7))
+        ax = plt.gca()
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.5)
 
-    plt.rcParams['font.family'] = 'Arial'
+        disp.plot(cmap=plt.cm.Blues, values_format='.1f', ax=ax)
+        ax.set_xticklabels([label.get_text() for label in ax.get_xticklabels()], fontweight='bold', color='black',
+                           size='20')
+        ax.set_yticklabels([label.get_text() for label in ax.get_yticklabels()], fontweight='bold', color='black',
+                           size='20')
 
+        for text in ax.texts:
+            text.set_fontsize(20)
 
-
-    cm = confusion_matrix(true_label, predicted_label, labels=['Stable', 'Metastable','Unstable'])
-    cm_percentage = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm_percentage, display_labels=['Stable', 'Metastable', 'Unstable'])
-    plt.figure(figsize=(9,7))
-    ax = plt.gca()
-    for spine in ax.spines.values():
-        spine.set_linewidth(1.5)
-
-
-    disp.plot(cmap=plt.cm.Blues, values_format='.1f', ax=ax)
-    ax.set_xticklabels([label.get_text() for label in ax.get_xticklabels()], fontweight='bold', color='black', size = '20')
-    ax.set_yticklabels([label.get_text() for label in ax.get_yticklabels()], fontweight='bold', color='black',size = '20')
-
-    for text in ax.texts:
-        text.set_fontsize(20)
-
-    plt.tight_layout()
-    plt.savefig(f'confusion matrix of {model_type}.jpg', dpi = 400)
-    cv_scores = cross_val_score(model, X, y, cv=5, scoring='accuracy')
-    print("Cross-validation scores:", cv_scores)
-    print("Average cross-validation score:", np.mean(cv_scores))
-    print("cross-validation 标准差:", np.std(cv_scores))
+        plt.tight_layout()
+        plt.savefig(f'confusion matrix of {model_type}.jpg', dpi=400)
 
 
+    if cv_or_not == True:
+        cv_scores = cross_val_score(model, X, y, cv=5, scoring='accuracy')
+        print("Cross-validation scores:", cv_scores)
+        print("Average cross-validation score:", np.mean(cv_scores))
+        print("cross-validation standard error:", np.std(cv_scores))
+    return accuracy
+from search import AutoEncoder
+import torch
 
-def predict(data_file_name, model_file):
-    model = joblib.load(model_file)
-
-    df = pd.read_csv(data_file_name)
-    X = df.iloc[:, :-3].values
-    y = df.iloc[:, -1].values
-
-    y_predicted = model.predict(X)
-
-    #X, y, y_predicted的类型都是numpy.ndarray
-    print(X.shape)
-    print(y.shape)
-    print(y_predicted.shape)
-
-    result = np.column_stack((X, y, y_predicted))
-    print(result.shape)
-
-    df = pd.DataFrame(result, columns=['Col1', 'Col2', 'Col3', 'Col4', 'Col5', 'Col6', 'Col7', 'Col8', 'Col9', 'Col10', 'y', 'y_predicted'])
-    df.to_csv('predict_result.csv', index=False)
-
-    accuracy = accuracy_score(y, y_predicted)
-    print(accuracy)
-
-    # #画出混淆举证
-    plt.rcParams['font.family'] = 'Arial'
-    true_label = np.where(y == 'a', 'Stable',
-                            np.where(y == 'b', 'Metastable',
-                            np.where(y == 'c', 'Unstable', y)))
-
-    predicted_label = np.where(y_predicted == 'a', 'Stable',
-                            np.where(y_predicted == 'b', 'Metastable',
-                            np.where(y_predicted == 'c', 'Unstable', y_predicted)))
-    #
-    #
-    cm = confusion_matrix(true_label, predicted_label, labels=['Stable', 'Metastable','Unstable'])
-    cm_percentage = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm_percentage, display_labels=['Stable', 'Metastable', 'Unstable'])
-    plt.figure(figsize=(9,7))
-    ax = plt.gca()
-    for spine in ax.spines.values():
-        spine.set_linewidth(1.5)
-
-
-    disp.plot(cmap=plt.cm.Blues, values_format='.1f', ax=ax)
-    ax.set_xticklabels([label.get_text() for label in ax.get_xticklabels()], fontweight='bold', color='black', size = '20')
-    ax.set_yticklabels([label.get_text() for label in ax.get_yticklabels()], fontweight='bold', color='black',size = '20')
-    for text in ax.texts:
-        text.set_fontsize(20)
-    plt.tight_layout()
-
-    plt.savefig(f'confusion matrix of {model_file}.jpg', dpi = 400)
-
-from tqdm import tqdm
-from sklearn.metrics import silhouette_score
-def error_analy(label_tag):
-    df = pd.read_csv('predict_result.csv')
-    condition = (df.iloc[:, -2] == 'b') & (df.iloc[:, -1] == 'b')
-    filtered_values = df.loc[condition, df.columns[:-2]]
-    # condition_2 = (df.iloc[:, -2] == 'a') & (df.iloc[:, -1] == 'b')
-    # filtered_values_2 = df.loc[condition_2, df.columns[:-2]]
-    # combined_values = pd.concat([filtered_values, filtered_values_2])
-    combined_values = filtered_values
-    scaler = StandardScaler()
-    combined_values = scaler.fit_transform(combined_values)
-
-    # labels = np.array([0] * len(filtered_values) + [1] * len(filtered_values_2))
-    labels = np.array([0] * len(filtered_values))
-
-    df = pd.DataFrame(combined_values, columns = df.columns[:-2])
-    # performing tsne
-    print("Performing t-SNE...")
-    tsne = TSNE(n_components=2, random_state=42, perplexity = 50)
-    tsne_results = tsne.fit_transform(df)
-
-    tsne_df = pd.DataFrame(tsne_results, columns=['t-SNE Component 1', 't-SNE Component 2'])
-    tsne_df['Label'] = labels
-
-    silhouette_scores = []
-    K = range(5, 20)  # 选择要评估的聚类数量范围
-    print("Evaluating optimal number of clusters using silhouette scores...")
-    for k in tqdm(K):
-        kmeans = KMeans(n_clusters=k, random_state=42, max_iter=500, tol=1e-6)
-        cluster_labels = kmeans.fit_predict(tsne_results)
-        silhouette_avg = silhouette_score(tsne_results, cluster_labels)
-        silhouette_scores.append(silhouette_avg)
-    optimal_k = K[np.argmax(silhouette_scores)]
-    print(f"Optimal number of clusters determined: {optimal_k}")
-    print(f"Clustering data into {optimal_k} clusters...")
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, max_iter=500, tol=1e-6)
-    cluster_labels = kmeans.fit_predict(tsne_results)
-
-    tsne_df['Cluster'] = cluster_labels
-    #cluster center
-    cluster_centers = kmeans.cluster_centers_
-    #plot detail
-    label_color_map = {0: 'red', 1: 'blue'}
-
-
-
-    fig, ax = plt.subplots()
-    ax = plt.gca()
-    for spine in ax.spines.values():
-        spine.set_linewidth(1.5)
-
-    plt.figure(figsize=(9, 6))
-
-    plt.rcParams['font.family'] = 'Arial'
-    cmap = plt.get_cmap('tab20')
-    colors = cmap(np.linspace(0, 1, len(np.unique(cluster_labels))))
-
-    if label_tag == 'mistake':
-        for label in np.unique(labels):
-            plt.scatter(tsne_df.loc[tsne_df['Label'] == label, 't-SNE Component 1'],
-                    tsne_df.loc[tsne_df['Label'] == label, 't-SNE Component 2'],
-                    label=f'Label {label}', color=label_color_map[label])
-    else:
-        for i, cluster in enumerate(np.unique(cluster_labels)):
-            plt.scatter(tsne_df.loc[tsne_df['Cluster'] == cluster, 't-SNE Component 1'],
-                    tsne_df.loc[tsne_df['Cluster'] == cluster, 't-SNE Component 2'],
-                    label=f'Cluster {cluster+1}', color=colors[i])
-
-
-    plt.scatter(cluster_centers[:, 0], cluster_centers[:, 1], marker='x', s=100, c='black', label='Cluster Centers')
-    plt.legend(frameon=False, prop={'weight': 'bold'}, bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.xlabel('t-SNE Component 1', weight = 'bold', size = 18)
-    plt.ylabel('t-SNE Component 2', weight = 'bold',size = 18)
-
-
-
-    plt.tight_layout()
-    plt.savefig(f"tsne_of_predictin_with {label_tag}.jpg", dpi=600)
-    # mean value
-    df['Cluster'] = cluster_labels
-    cluster_means = df.groupby('Cluster').mean()
-    pd.set_option('display.max_rows', None)  # 显示所有行
-    pd.set_option('display.max_columns', None)  # 显示所有列
-    print("Cluster Means:")
-    print(cluster_means.to_string())
-
-
-
-
-    # pca = PCA(n_components=2)
-    # pca_results_1 = pca.fit_transform(filtered_values_scaled)
-    # pca_results_2 = pca.fit_transform(filtered_values_2_scaled)
-
-    # 绘制 PCA 图
-    # plt.figure(figsize=(8, 6))
-    # plt.scatter(pca_results_1[:, 0], pca_results_1[:, 1], label='unstable to metastable', color='blue', alpha=0.6)
-    # plt.scatter(pca_results_2[:, 0], pca_results_2[:, 1], label='stable to metastable', color='green', alpha=0.6)
-    #
-    # plt.title('PCA Analysis of Filtered Values')
-    # plt.xlabel('PCA Component 1', weight = 'bold')
-    # plt.ylabel('PCA Component 2', weight = 'bold')
-    # plt.legend(frameon=False, prop={'weight': 'bold'})
-    # plt.xticks(fontsize=12)  # 设置x轴刻度字体大小
-    # plt.yticks(fontsize=12)
-    # plt.show()
-
+'''this is for the investigate of using different ratio of the whole data for training'''
 def subset_training():
     train_ratios = [0.05] + [0.1 * i for i in range(1, 10)]
-    df = pd.read_csv('data_12/0.10.csv')  #first line is feature name
-    X = df.iloc[:, :-3].values
+    df = pd.read_csv('data_33_unnormalized.csv')
+    df = df.dropna()
+
+    X = df.iloc[:, 1:-1].values
     y = df.iloc[:, -1].values
-    feature_names = df.columns[:-3]
-    accuracy_1_list = []
-    accuracy_2_list = []
-    accuracy_3_list = []
+
+    y = np.where(y > 0.1, 'c',
+                 np.where((y > 0) & (y <= 0.1), 'b', 'a'))
+
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
+    smote = SMOTE(random_state=42)
+    X, y = smote.fit_resample(X, y)
+
+    # 用于存储结果
+    results = []
 
     for ratio in train_ratios:
-        print(f"\nTraining with { int(1-ratio * 100)}% of the data:")
-        X_used, X_unused, y_used, y_unused = train_test_split(X, y, test_size=1 - ratio, random_state=42)
-        model = RandomForestClassifier(n_estimators=100,
-                                   criterion='gini',
-                                   max_depth = 15,
-                                   min_samples_split=4,
-                                   min_samples_leaf=1,
-                                   max_features='sqrt',
-                                   min_impurity_decrease=0.0,
-                                   bootstrap= False,
-                                   oob_score = False,
-                                   n_jobs = -1,
-                                   random_state=42)
-        X_1, X_test, y_1, y_test = train_test_split(X_used, y_used, test_size=0.2, random_state = 42)
-        X_train, X_val, y_train, y_val = train_test_split(X_1, y_1, test_size=0.25, random_state = 42)
+        print(f"\nTraining with {ratio*100:.1f}% of the data:")
+        X_used, X_unused, y_used, y_unused = train_test_split(
+            X, y, test_size=1 - ratio, random_state=42
+        )
+
+        model = RandomForestClassifier(
+            n_estimators=100,
+            criterion='gini',
+            max_depth=15,
+            min_samples_split=4,
+            min_samples_leaf=1,
+            max_features='sqrt',
+            bootstrap=False,
+            oob_score=False,
+            n_jobs=-1,
+            random_state=42
+        )
+
+        X_1, X_test, y_1, y_test = train_test_split(
+            X_used, y_used, test_size=0.2, random_state=42
+        )
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_1, y_1, test_size=0.25, random_state=42
+        )
 
         model.fit(X_train, y_train)
 
-        y_pred = model.predict(X_test)
-        accuracy_1 = accuracy_score(y_test, y_pred)
-        accuracy_1_list.append(accuracy_1)
+        # accuracy1：测试集
+        accuracy_test = accuracy_score(y_test, model.predict(X_test))
 
-        y_pred_2 = model.predict(X_used)
-        accuracy_2 = accuracy_score(y_used, y_pred_2)
-        accuracy_2_list.append(accuracy_2)
+        # accuracy2：subset 内部所有数据
+        accuracy_subset = accuracy_score(y_used, model.predict(X_used))
 
-        y_pred_2 = model.predict(X)
-        accuracy_3 = accuracy_score(y, y_pred_2)
-        accuracy_3_list.append(accuracy_3)
+        # accuracy3：所有数据全集
+        accuracy_whole = accuracy_score(y, model.predict(X))
 
-        joblib_file = 'subset_training' + str(ratio)+'.pkl'
-        joblib.dump(model, joblib_file)
-        print(f"Model saved as {joblib_file}")
+        # 记录结果
+        results.append({
+            "train_ratio": ratio,
+            "test_accuracy": accuracy_test,
+            "subset_accuracy": accuracy_subset,
+            "whole_accuracy": accuracy_whole
+        })
 
-    print('accuracy on tesetset, subset, whole dataset')
-    print(accuracy_1_list)
-    print(accuracy_2_list)
-    print(accuracy_3_list)
-from itertools import combinations
-def feature_palie():
-    df = pd.read_csv('data_12/0.10.csv')  #first line is feature name
+        joblib.dump(model, f"subset_training_{ratio}.pkl")
+        print(f"Model saved as subset_training_{ratio}.pkl")
+
+    # 保存 CSV
+    results_df = pd.DataFrame(results)
+    results_df.to_csv("subset_training_results.csv", index=False)
+    print("\nResults saved to subset_training_results.csv")
+    print(results_df)
+
+from sklearn.inspection import permutation_importance
+'''data_folder contains cifs, model_file is the model loaded'''
+def predict(data_folder, model_file, shap_or_not ,threshold = None, record = True):
+    start_time = time.time()
+    if os.path.exists("5A1B_r.csv"):
+        print("📄 Found hea_data.csv — loading directly ...")
+        dfs = pd.read_csv("5A1B_r.csv")
+    else:
+        df = []
+        for i in os.listdir(data_folder):
+            df0 = cif_reader(os.path.join(data_folder, i))
+            df.append(df0)
+            print(i)
+        dfs = pd.concat(df, ignore_index=True)
+        print('data loading is finished')
+        dfs.to_csv("5A1B_r.csv", index=False)
+    dfs = dfs.dropna()
+    model = joblib.load(model_file)
+    encoder_model = AutoEncoder(input_dim=35, latent_dim=16)
+    encoder_model.load_state_dict(torch.load("autoencoder_latent_16.pth"))
+    encoder_model.eval()
+    scaler = StandardScaler()
+
+    X = dfs.iloc[:, 1:].values
+    X_scaled = scaler.fit_transform(X)
+    X_scaled = torch.tensor(X_scaled, dtype=torch.float32)
+
+    with torch.no_grad():
+        _, X_new = encoder_model(X_scaled)
+
+
+    X_new = scaler.fit_transform(X_new)
+    y_predicted = model.predict(X_new)
+
+    col_name = "y_predicted"
+    df_predict = dfs.iloc[:, [0]].copy()  # 取第一列当 id
+    df_predict.columns = ["id"]
+    df_predict[col_name] = y_predicted
+
+
+    if record:
+        df_save = dfs.copy()
+        df_save[col_name] = y_predicted
+
+        df_save.to_csv(f'predict_result_'+ str(threshold) +'1210.csv', index=False)
+        label_counts = df_save[col_name].value_counts()
+        print(f'predict result (threshold={threshold}):')
+        print(label_counts)
+
+
+    end_time = time.time()
+    elapsed = end_time - start_time
+    print(f"\n⏱ Total running time: {elapsed:.2f} seconds")
+
+
+
+    if shap_or_not == True:
+        print("\nComputing SHAP values...")
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer(X_new)
+        for i, class_name in enumerate(['Class a', 'Class b', 'Class c']):  # 用实际类别名称
+            print(f"SHAP Summary Plot for {class_name}")
+            plt.figure(figsize=(8, 7))
+
+            shap.summary_plot(shap_values[:, :, i], X_new, feature_names=list(range(1, 17)), max_display=8, plot_size=(8,7), show=False)
+            plt.xlabel("SHAP Value", fontsize=22, fontweight='bold')
+            plt.ylabel("Feature", fontsize=22, fontweight='bold')
+            plt.xticks(fontsize=18, fontweight='bold')
+            plt.yticks(fontsize=18, fontweight='bold')
+
+            output_file_svg = f"shap_summary_plot_{class_name}.tif"
+            plt.savefig(output_file_svg, format='tif', dpi=600, bbox_inches='tight')
+
+
+
+
+'''test different feature combinations (1024)'''
+def feature_combination():
+    df = pd.read_csv('data/0.10.csv')  #first line is feature name
     X = df.iloc[:, :-3].values
     y = df.iloc[:, -1].values
     feature_names = df.columns[:-3]
@@ -621,79 +611,19 @@ def feature_palie():
 
     #computing accuracy
             accuracy = accuracy_score(true_label, predicted_label)
-
-
             all_accuracy = accuracy_score(all_true_label, all_predicted_label)
             results.append({
             'num_features': num_features,
             'features': selected_feature_names.tolist(),
-            'accuracy': accuracy,
-            'all_feature': all_accuracy
+            'accuracy on test set': accuracy,
+            'accuracy on whole dataset': all_accuracy
         })
             print('training with {} is done'.format(selected_feature_names))
             indices += 1
             print(indices)
             print('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
-    pd.DataFrame(results).to_csv('feature_selection_results.csv', index=False)
+    pd.DataFrame(results).to_csv('feature_combination_results.csv', index=False)
 
-def cerition_training():
-    results = []
-    for value in np.arange(0, 0.31, 0.01):
-        file_name = os.path.join('data_12',(str("{:.2f}".format(value))+'.csv'))
-        df = pd.read_csv(file_name)  # first line is feature name
-        X = df.iloc[:, :-3].values
-        y = df.iloc[:, -1].values
-        feature_names = df.columns[:-3]
-
-        X_train, X_test_1, y_train, y_test_1 = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y)
-        X_train_1, X_val_1, y_train_1, y_val_1 = train_test_split(
-            X_train, y_train, test_size=0.25, random_state=42, stratify=y_train)
-
-        model = RandomForestClassifier(n_estimators=100,
-                                       criterion='gini',
-                                       max_depth=15,
-                                       min_samples_split=4,
-                                       min_samples_leaf=1,
-                                       max_features='sqrt',
-                                       max_leaf_nodes=None,
-                                       min_impurity_decrease=0.0,
-                                       bootstrap=False,
-                                       oob_score=False,
-                                       n_jobs=-1,
-                                       random_state=42)
-        model.fit(X_train_1, y_train_1)
-
-        predictions = model.predict(X_test_1)
-        all_predictions = model.predict(X)
-
-        # label conversion
-        true_label = np.where(y_test_1 == 'a', 'Stable',
-                              np.where(y_test_1 == 'b', 'Metastable',
-                                       np.where(y_test_1 == 'c', 'Unstable', y_test_1)))
-        all_true_label = np.where(y == 'a', 'Stable',
-                                  np.where(y == 'b', 'Metastable',
-                                           np.where(y == 'c', 'Unstable', y)))
-        predicted_label = np.where(predictions == 'a', 'Stable',
-                                   np.where(predictions == 'b', 'Metastable',
-                                            np.where(predictions == 'c', 'Unstable', predictions)))
-        all_predicted_label = np.where(all_predictions == 'a', 'Stable',
-                                       np.where(all_predictions == 'b', 'Metastable',
-                                                np.where(all_predictions == 'c', 'Unstable', all_predictions)))
-
-        accuracy = accuracy_score(true_label, predicted_label)
-
-        all_accuracy = accuracy_score(all_true_label, all_predicted_label)
-
-        results.append({
-
-            'accuracy': accuracy,
-            'all_feature': all_accuracy
-        })
-        joblib_file = 'cerition_training' + str("{:.2f}".format(value))+'.pkl'
-        joblib.dump(model, joblib_file)
-        print(f"Model saved as {joblib_file}")
-    pd.DataFrame(results).to_csv('cerition_training.csv', index=False)
 
 def predicting_curve():
     results = []
@@ -722,129 +652,168 @@ def predicting_curve():
     # Save to CSV
     results_df.to_csv("model_accuracy_matrix.csv", index=False)
 
+def model_analysis():
+    results = []
+    for value in np.arange(0, 0.31, 0.01):
+        model_file = os.path.join('cerition_training'+(str("{:.2f}".format(value))+'.pkl'))
+        model = joblib.load(model_file)
 
-def combined_prediction():
-    data_file = 'application_ABX3.csv'
-    df = pd.read_csv(data_file)
-    df_new = df.iloc[:, 2:]
-    df_new = df_new.dropna()
+        if hasattr(model, "tree_"):  # 检查是否是单颗决策树
+            print(f"Model {value:.2f}: Depth = {model.tree_.max_depth}, Nodes = {model.tree_.node_count}")
+        elif hasattr(model, "estimators_"):  # 检查是否是随机森林或梯度提升树
+            depths = [est.tree_.max_depth for est in model.estimators_]
+            avg_depth = sum(depths) / len(depths)
+            leaves = sum(est.tree_.n_leaves for est in model.estimators_) / len(model.estimators_)
+            nodes = sum(est.tree_.node_count for est in model.estimators_) / len(model.estimators_)
+        data_file = os.path.join('data_12', (str("{:.2f}".format(value)) + '.csv'))
+        df = pd.read_csv(data_file)
+        X = df.iloc[:, :-3].values
+        y = df.iloc[:, -1].values
+        y_predicted = model.predict(X)
+        accuracy = accuracy_score(y, y_predicted)
+        results.append([value,  avg_depth, leaves, nodes, accuracy])
+    df_results = pd.DataFrame(results, columns=["Threshold",  "Avg Depth", "Leaves", "Nodes", "Accuracy"])
+    df_results.to_csv("model_analysis_results.csv", index=False, encoding="utf-8-sig")
 
-    df_new.iloc[:, -1] = df_new.iloc[:, -1].apply(
-            lambda x: 'a' if float(x) == 0 else 'b' if 0 < float(x) < 0.1 else 'c')
-    df_new = df_new.iloc[:, :-3].join(df_new.iloc[:, -1:])
-    X = df_new.iloc[:, :-1].values
-    y = df_new.iloc[:, -1].values
-
-    y_counts = pd.Series(y).value_counts()
-    print('真实的结果为:')
-    indices_a = [i for i, label in enumerate(y) if label == 'a']
-    first_column_values = df.iloc[indices_a, 0].values
-    # print(first_column_values)
-    print(y_counts)
-
-
-    model_1_path  = 'cerition_training0.10.pkl'
-    model_2_path  = 'cerition_training0.09.pkl'
-    model_3_path  = 'cerition_training0.08.pkl'
-    model_4_path  = 'cerition_training0.07.pkl'
-    model_1 = joblib.load(model_1_path)
-    model_2 = joblib.load(model_2_path)
-    model_3 = joblib.load(model_3_path)
-    model_4 = joblib.load(model_4_path)
-
-    y_predicted_1 = model_1.predict(X)
-    y_predicted_2 = model_2.predict(X)
-    y_predicted_3 = model_3.predict(X)
-    y_predicted_4 = model_4.predict(X)
-
-    def calculate_accuracy_for_category(predicted, true, category='a'):
-        # 计算真实为'category'的样本预测为'category'的比例
-        true_category = true == category
-        predicted_category = predicted == category
-        correct_predictions = sum(true_category & predicted_category)
-        total_category = sum(true_category)
-        category_accuracy = correct_predictions / total_category if total_category > 0 else 0
-        return category_accuracy
-
-    print('第一次预测结果为:')
-    y_final = y_predicted_1
-    print(pd.Series(y_final).value_counts())
-    print(accuracy_score(y, y_final))
-    print(f"类别 'a' 的准确度为: {calculate_accuracy_for_category(y_final, y, 'a' ):.2f}")
-    print(f"类别 'b' 的准确度为: {calculate_accuracy_for_category(y_final, y, 'b' ):.2f}")
-    print(f"类别 'c' 的准确度为: {calculate_accuracy_for_category(y_final, y, 'c' ):.2f}")
-
-    print('第2次预测结果为:')
-    print(pd.Series(y_predicted_2).value_counts())
-    print(accuracy_score(y, y_predicted_2))
-    print(f"类别 'a' 的准确度为: {calculate_accuracy_for_category(y_predicted_2, y, 'a'):.2f}")
-
-    print('第3次预测结果为:')
-    print(pd.Series(y_predicted_3).value_counts())
-    print(accuracy_score(y, y_predicted_3))
-    print(f"类别 'a' 的准确度为: {calculate_accuracy_for_category(y_predicted_3, y, 'a'):.2f}")
-
-    print('第4次预测结果为:')
-    print(pd.Series(y_predicted_4).value_counts())
-    print(accuracy_score(y, y_predicted_4))
-    print(f"类别 'a' 的准确度为: {calculate_accuracy_for_category(y_predicted_4, y, 'a'):.2f}")
-
-    print('综合234次预测结果为:')
-    y_combined = []
-    for i in range(len(y)):
-        votes = [y_predicted_2[i], y_predicted_3[i], y_predicted_4[i]]
-        majority_vote = max(set(votes), key=votes.count)  # 找到票数最多的标签
-        y_combined.append(majority_vote)
-
-    print(pd.Series(y_combined).value_counts())
-    print(accuracy_score(y, y_combined))
-    print(f"类别 'a' 的准确度为: {calculate_accuracy_for_category(y_combined, y, 'a'):.2f}")
-
-    # 使用 y_combined 矫正 y_final
-    y_corrected = y_final.copy()  # 创建 y_final 的副本进行修改
-    for i in range(len(y_final)):
-        if y_final[i] == 'b' and y_combined[i] == 'a':
-            y_corrected[i] = 'a'
-
-        if y_final[i] == 'b' and y_combined[i] == 'c':
-            y_corrected[i] = 'c'
-
-    print('矫正后的预测结果为:')
-    print(pd.Series(y_corrected).value_counts())
-    print('矫正后的准确率:')
-    print(accuracy_score(y, y_corrected))
-    print(f"类别 'a' 的准确度为: {calculate_accuracy_for_category(y_corrected, y, 'a'):.2f}")
-
-    categories = ['a', 'b', 'c']
-    for category in categories:
-        true_category = y == category
-        predicted_category = y_corrected == category
-        correct_predictions = sum(true_category & predicted_category)
-        total_category = sum(true_category)
-        category_accuracy = correct_predictions / total_category if total_category > 0 else 0
-        print(f"类别 {category} 的准确度: {category_accuracy:.2f}")
+def label_entrophy_compare():
 
 
 
+    prediction_file = 'predict_result.csv'
+    entropy_file = 'ce.csv'
+
+    df_pred = pd.read_csv(prediction_file)     # 第一列：id，第二列：label(a/b/c)
+    df_pred = df_pred.iloc[:,[0,-1]]
+    df_ent  = pd.read_csv(entropy_file)        # 第一列：id，第二列：entropy
+    df_ent = df_ent.iloc[:, [0, 2]]
+
+    # 重命名列，防止重复
+    df_pred.columns = ['id', 'label']
+    df_ent.columns  = ['id', 'entropy']
+
+    # 合并
+    df = pd.merge(df_pred, df_ent, on='id', how='inner')
+
+    # 按 label 顺序排序（a → b → c）
+    df['label'] = pd.Categorical(df['label'], categories=['a', 'b', 'c'], ordered=True)
+    df = df.sort_values('label')
+
+    # 保存结果
+    df.to_csv('label_entropy_merged.csv', index=False)
+
+    label_counts = df['label'].value_counts().reindex(['a', 'b', 'c']).fillna(0).astype(int)
+    for label, count in label_counts.items():
+        print(f"标签 {label} 的数量: {count}")
 
 
+import numpy as np
+from scipy.spatial.distance import pdist, cdist, squareform
+from sklearn.metrics import pairwise_distances
 
 
+def Distance_to_centroid():
+    values = [0.04, 0.07, 0.10, 0.13]
 
+    for v in values:
+        file_path = os.path.join('data', f"{v:.2f}.csv")
+        df = pd.read_csv(file_path)
+
+        X = df.iloc[:, :-3].values
+        y = df.iloc[:, -1].values
+        classes = np.unique(y)
+
+        # -------- 计算类中心 --------
+        centroids = {}
+        for c in classes:
+            X_c = X[y == c]
+            centroids[c] = X_c.mean(axis=0)
+
+        # -------- 每个样本到类中心的距离 --------
+        records = []
+        for idx in range(len(X)):
+            c = y[idx]
+            d = np.linalg.norm(X[idx] - centroids[c])
+            if c != 'a':
+                records.append([idx,c,d])
+
+        df_out = pd.DataFrame(records, columns=["sample_id", "class", "distance"])
+
+        out_path = os.path.join('results', f"distances_{v:.2f}.csv")
+        os.makedirs('results', exist_ok=True)
+        df_out.to_csv(out_path, index=False)
+
+        # -------- 计算类间距离 --------
+        centroid_matrix = np.vstack([centroids[c] for c in classes])
+        between_dists = pairwise_distances(centroid_matrix, metric="euclidean")
+
+        for i in range(len(classes)):
+            for j in range(i + 1, len(classes)):
+                print(v)
+                print(between_dists[i, j])
+
+import glob
+def hea_stastic():
+    files = sorted(glob.glob("predict_result_0.*.pkl.csv"))
+
+    dfs = []
+    thresholds = []
+
+    for f in files:
+        # 获取阈值，例如 0.05
+        th = f.split("_")[-1].replace(".pkl.csv", "")
+        thresholds.append(th)
+
+        df = pd.read_csv(f)
+        df = df.iloc[:, [0, -1]]  # 只取第一列和最后一列
+        df.columns = ["id", f"pred_{th}"]
+        dfs.append(df)
+
+    # 2. 合并数据（以 id 为 key）
+    from functools import reduce
+    df_merge = reduce(lambda left, right: pd.merge(left, right, on="id", how="outer"), dfs)
+
+    # 保存合并文件
+    df_merge.to_csv("combined_predictions.csv", index=False)
+    print("✅ 合并文件已保存：combined_predictions.csv")
+
+    # 3. 分析 11 个标签是否一致
+    label_cols = [col for col in df_merge.columns if col.startswith("pred_")]
+
+    df_merge["all_a"] = df_merge[label_cols].apply(lambda x: all(v == "a" for v in x), axis=1)
+    df_merge["all_b"] = df_merge[label_cols].apply(lambda x: all(v == "b" for v in x), axis=1)
+    df_merge["all_c"] = df_merge[label_cols].apply(lambda x: all(v == "c" for v in x), axis=1)
+
+    # 提取列表
+    all_a_list = df_merge[df_merge["all_a"]]["id"].tolist()
+    all_b_list = df_merge[df_merge["all_b"]]["id"].tolist()
+    all_c_list = df_merge[df_merge["all_c"]]["id"].tolist()
+
+    print("\n========== 统计结果 ==========")
+    print(f"🔹 标签均为 a 的个数：{len(all_a_list)}")
+    print(f"🔹 标签均为 b 的个数：{len(all_b_list)}")
+    print(f"🔹 标签均为 c 的个数：{len(all_c_list)}")
+
+    # 保存结果
+    pd.DataFrame({
+        "all_a": all_a_list,
+        "all_b": all_b_list,
+        "all_c": all_c_list
+    }).to_csv("label_consistency_summary.csv", index=False)
+
+    print("📄 一致性统计文件已保存：label_consistency_summary.csv")
+
+
+import csv
 
 if __name__ == '__main__':
-    # subset_training()
-    # for i in model_considered:
-    #     train_other('data_12/0.10.csv','a',i)
+    # for i in np.arange(0.01, 0.16, 0.01):
+    # train_rf('encoded_latent_16.csv', True, 'smote', False, 5, False, False, False, False, False, 0.10)
+    # filenames = [f"RF_model0.{i:02d}.pkl" for i in range(1, 16)]
+    # for i in filenames:
+    # predict('generated_oxides_lattice', i, i.split('model')[1])
 
-    # error_analy('cluster')
-    # train_rf('data_12/0.10.csv',False,False,[5,10],10,True,False)
 
-    # feature_palie()
 
-    # cerition_training()
-    # predict('data_12/0.10.csv', 'cerition_training0.10.pkl')
-    # predicting_curve()
+    predict('5A1B_r', 'RF_model0.10.pkl', True)
 
-    combined_prediction()
 
