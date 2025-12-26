@@ -1,6 +1,5 @@
 import os
 import re
-
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
@@ -14,332 +13,26 @@ from sklearn.metrics import confusion_matrix
 from sklearn.metrics import roc_curve, auc
 import seaborn as sns
 import matplotlib.pyplot as plt
-#
-
-
-
-
-#     #将化学式转化为化学系统
-def formula_to_chemsys(formula):
-
-    elements = re.findall(r'[A-Z][a-z]*|\d+', formula)
-    elements_without_numbers = [element for element in elements if not element.isdigit()]
-    chemsys = '-'.join(sorted(set(elements_without_numbers)))
-
-    return chemsys
-
-#将包含目标的文件转化为可用于CGCNN学习的id_prop.csv
-def txt_transfer():
-    new_lines = []
-    with open('unstable_3_materials.txt','r')as file:
-        lines = file.readlines()
-    for i in lines:
-        list = i.split(',')
-
-        list = list[:2]
-
-        list.append(list[-1])
-
-        new_lines.append(list)
-
-    with open('id_prop.csv','w')as file:
-        for sublist in new_lines:
-            line = ','.join(map(str, sublist)) + '\n'
-            file.write(line)
-
-#计算某一个文件中target的平均值
-def average_calculator():
-    with open ('unstable_3_formation_energy','r')as file:
-        lines = file.readlines()
-    lines = [x.split(',')[1] for x in lines]
-    lines = [float(x) for x in lines]
-    total = 0
-    for num in lines:
-        total += abs(num)
-    average = total/len(lines)
-    print('average is {}'.format(average))
-
-#对包含Fe的600余种晶体做回归，随机森林算法
-def rf():
-    file_path = 'test_new.txt'
-    df = pd.read_csv(file_path, header=None, names=["name", "target", "feature1", "feature2", "feature3", "feature4", "feature5"])
-
-    X = df[["feature1", "feature2", "feature3", "feature4", "feature5"]]
-    y = df["target"]
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    # 划分训练集和测试集
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
-
-    # 创建和训练随机森林模型
-    model = RandomForestRegressor(random_state=42)
-    param_grid = {
-        'n_estimators': [100, 200, 300],
-        'max_depth': [None, 10, 20, 30],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'bootstrap': [True, False]
-    }
-    grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=3, n_jobs=-1, verbose=2)
-    grid_search.fit(X_train, y_train)
-
-    best_model = grid_search.best_estimator_
-    # 进行预测
-    y_pred = best_model.predict(X_test)
-
-
-
-
-    mse = mean_squared_error(y_test, y_pred)
-    print(f"Mean Squared Error: {mse}")
-
-    y_test = list(y_test)
-    y_pred = list(y_pred)
-    data = list(zip(y_test, y_pred))
-
-    with open('output2.csv', 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        # 写入两列数据
-
-        writer.writerows(data)
-#对包含Fe的600余种晶体做三分类随机森林算法
-def rf_2():
-    file_path = 'test_Fe_unstable.txt'
-    df = pd.read_csv(file_path, header=None, names=["name", "target", "feature1", "feature2", "feature3", "feature4", "feature5"])
-
-    X = df[["feature1", "feature2", "feature3", "feature4", "feature5"]]
-    y = df["target"]
-
-    X = np.array(X)
-    y = ['a' if x == 0 else 'b' for x in list(y)]
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
-
-    predictions = model.predict(X_test)
-    print("Predictions:", predictions)
-
-    accuracy = accuracy_score(y_test, predictions)
-    print("Accuracy:", accuracy)
-    #混淆举证
-    conf_matrix = confusion_matrix(y_test, predictions)
-    print("Confusion Matrix:")
-    print(conf_matrix)
-
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(conf_matrix, annot=False, fmt='d', cmap='Blues', xticklabels=['stable', 'unstable'], yticklabels=['stable', 'unstable'],
-                annot_kws={"color": "red"})
-    plt.xlabel('Predicted Label')
-    plt.ylabel('True Label')
-    plt.title('Confusion Matrix')
-    plt.show()
-
-
-    #ROC曲线
-    y_score = model.predict_proba(X_test)[:, 1]  # 获取正类的概率
-    fpr, tpr, thresholds = roc_curve(y_test, y_score, pos_label='b')  # 计算ROC曲线
-    roc_auc = auc(fpr, tpr)
-
-    plt.figure()
-    plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
-    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic')
-    plt.legend(loc="lower right")
-    plt.show()
-    #importance
-    feature_importance = model.feature_importances_
-
-    # 创建特征重要性的DataFrame
-    importance_df = pd.DataFrame({'Feature': df.columns[2:], 'Importance': feature_importance})
-
-    # 排序特征重要性
-    importance_df = importance_df.sort_values(by='Importance', ascending=False)
-    print(importance_df)
-    # plt.figure(figsize=(10, 6))
-    # plt.bar(importance_df['Feature'], importance_df['Importance'])
-    # plt.xlabel('Feature')
-    # plt.ylabel('Importance')
-    # plt.title('Feature Importance')
-    # plt.xticks(rotation=45)
-    # plt.show()
-
-#对包含Fe的600余种晶体做三分类随机森林算法
-def rf_3():
-    file_path = 'test_Fe_unstable.txt'
-    df = pd.read_csv(file_path, header=None, names=["name", "target", "feature1", "feature2", "feature3", "feature4", "feature5"])
-
-    X = df[["feature1", "feature2", "feature3", "feature4", "feature5"]]
-    y = df["target"]
-
-    X = np.array(X)
-    y = ['a' if x == 0 else 'b' if 0 < x < 0.1 else 'c' for x in list(y)]
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
-
-    predictions = model.predict(X_test)
-    print("Predictions:", predictions)
-
-    accuracy = accuracy_score(y_test, predictions)
-    print("Accuracy:", accuracy)
-
-    y_score = model.predict_proba(X_test)[:, 1]  # 获取正类的概率
-    fpr, tpr, thresholds = roc_curve(y_test, y_score, pos_label='b')  # 计算ROC曲线
-    roc_auc = auc(fpr, tpr)
-
-    plt.figure()
-    plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
-    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic')
-    plt.legend(loc="lower right")
-    plt.show()
-
-    feature_importance = model.feature_importances_
-
-    # 创建特征重要性的DataFrame
-    importance_df = pd.DataFrame({'Feature': df.columns[2:], 'Importance': feature_importance})
-
-    # 排序特征重要性
-    importance_df = importance_df.sort_values(by='Importance', ascending=False)
-    print(importance_df)
-
-#总结formation energy
-def all_f():
-    with open('formation_all','w')as file:
-        a = os.listdir('data/formation energy')
-        for i in a:
-            file_path = os.path.join('data/formation energy', i)
-            with open(file_path,'r')as file_2:
-                lines = file_2.readlines()
-            for k in lines:
-                name = k.split(',')[0]
-                for_energy = k.split(',')[1]
-                new_line = name+','+for_energy
-                file.write('{}'.format(new_line))
-        file.close()
-
-#总结e_hull
-def all_e():
-
-    with open('energy_above_hull_all_stable', 'w') as file:
-        a = os.listdir('data/stable')
-
-        for i in a:
-            file_path = os.path.join('data/stable', i)
-            with open(file_path, 'r') as file_2:
-                lines = file_2.readlines()
-            for k in lines:
-                name = k.split(',')[0]
-                for_energy = k.split(',')[1]
-                new_line = name + ',' + for_energy
-                file.write('{}\n'.format(new_line))
-        file.close()
-
-    with open('energy_above_hull_all_unstable', 'w') as file:
-        b = os.listdir('data/unstable')
-        for i in b:
-            file_path = os.path.join('data/unstable', i)
-            with open(file_path, 'r') as file_2:
-                lines = file_2.readlines()
-            for k in lines:
-                name = k.split(',')[0]
-                for_energy = k.split(',')[1]
-                new_line = name + ',' + for_energy
-                file.write('{}\n'.format(new_line))
-        file.close()
-
-#绘制e_hull vs ef
-def f_vs_e():
-
-    material_dict = {}
-    with open ('formation_all', 'r') as file:
-        lines = file.readlines()
-        file.close()
-    with open ('energy_above_hull_all', 'r') as file_2:
-        lines_2 = file_2.readlines()
-
-
-
-    for i in lines:
-        name = i.split(',')[0]
-        formation_energy = i.split(',')[1].split('\n')[0]
-        material_dict[name] = formation_energy
-
-
-    for i in lines_2:
-        if i.split(',')[0] in material_dict.keys():
-            material_dict[(i.split(',')[0])] += (','+ i.split(',')[1].split('\n')[0])
-
-    with open('summary','w') as file:
-        for key,value in material_dict.items():
-            file.write('{},{}\n'.format(key,value))
-
-#绘制数量柱状图
-def count():
-    energy_list = []
-    count_list = []
-    with open('formation_all','r')as file:
-        lines = file.readlines()
-    for i in lines:
-        energy_list.append(float(i.split(',')[1]))
-
-    start_at = -5
-
-
-
-    for i in range(1,111,1):
-        count_num = 0
-        for k in energy_list:
-            print(start_at+0.1*i)
-            if start_at+0.1*i < k < start_at+0.1*(i+1):
-                count_num += 1
-        count_list.append(count_num)
-
-    with open('count_2','w')as file:
-        for i in count_list:
-            file.write('{}\n'.format(float(i)))
-
-#查看不同scale里面样本的数量
-def scale():
-    e_hull_list = []
-    with open ('data/unstable/unstable_4_materials', 'r') as file:
-        lines = file.readlines()
-    for i in lines:
-        e_hull_list.append(float(i.split(',')[1]))
-
-    sorted_e_hull_list = sorted(e_hull_list)
-
-
-
-    num_1 = 0
-
-    for i in e_hull_list:
-        if i>0.1:
-            num_1 +=1
-
-
-
-    with open('data/stable/stable_4_materials', 'r') as file:
-        lines_2 = file.readlines()
-    print('0 meV is {}'.format(len(lines_2)))
-    print('0 to 100 meV is {}'.format((len(e_hull_list)-num_1)))
-    print('more than 100 meV is {}'.format(num_1))
-
-    print('material containg N is 11396')
+import os.path
+from pymatgen.io.cif import CifParser
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+import numpy as np
+import pandas as pd
+from math import log2
+from pymatgen.core import Element
+from pymatgen.analysis.local_env import CrystalNN
+from search import mass_dict
+import re
+from search import metals
+from scipy.stats import skew, kurtosis
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import silhouette_score, calinski_harabasz_score
+from tqdm import tqdm
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+import shap
+from imblearn.over_sampling import RandomOverSampler, SMOTE
 
 element_symbols = {
     "H": "Hydrogen",
@@ -461,8 +154,14 @@ element_symbols = {
     "Ts": "Tennessine",
     "Og": "Oganesson"
 }
+#     #将化学式转化为化学系统
+def formula_to_chemsys(formula):
 
+    elements = re.findall(r'[A-Z][a-z]*|\d+', formula)
+    elements_without_numbers = [element for element in elements if not element.isdigit()]
+    chemsys = '-'.join(sorted(set(elements_without_numbers)))
 
+    return chemsys
 def cohesive_energy_loader(cohesive_energy_file):
 
     with open(cohesive_energy_file, 'r')as file:
@@ -473,140 +172,6 @@ def cohesive_energy_loader(cohesive_energy_file):
         value_in_eV = float(i.split(',')[-1])
         cohesive_dict[name] = value_in_eV
     return cohesive_dict
-
-def box_plot(data):
-    labels = ['Atom number', 'Element number', 'Density', 'Magnetic atom number',
-              'Crystal system', 'Space group', 'Average cohesive energy']
-
-    # 创建子图
-    fig, axes = plt.subplots(nrows=1, ncols=7, figsize=(20, 6), sharey=False)
-
-    # 自定义颜色
-    colors = ['cyan', 'lightblue', 'lightgreen', 'tan', 'pink', 'lightgrey', 'lightcoral']
-
-    # 绘制每个特征的箱线图
-    for i, ax in enumerate(axes):
-        box = ax.boxplot(data[:, i], patch_artist=True, vert=True)
-        for patch in box['boxes']:
-            patch.set_facecolor(colors[i])
-        for flier in box['fliers']:
-            flier.set(marker='o', color='red', alpha=0.5, markersize=6)
-        ax.set_title(labels[i])
-        ax.set_ylabel('Values')
-
-    # 设置总体标题和布局
-    plt.suptitle('Box Plot of Feature Data')
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-
-    # 显示图像
-    plt.show()
-
-def data_collector():
-    df_list = []
-    total_rows = 0
-
-    path_list = os.listdir('data/features')
-    for i in path_list:
-        file_path = os.path.join('data/features', i)
-        df = pd.read_csv(file_path)
-        df_list.append(df)
-
-        num_rows = df.shape[0]
-        print(f"File {i} has {num_rows} rows.")
-        total_rows += num_rows
-
-    combined_df = pd.concat(df_list, ignore_index=True)
-    final_row_count = combined_df.shape[0]
-    print(f"Total number of rows in the final combined file: {final_row_count}")
-
-    combined_df.to_csv('data/features/combined_features.csv', index=False)
-
-def data_miner(target_row_ratio):
-
-
-    df = pd.read_csv('data/features/combined_features.csv', header=0)
-    target_row_count = int((target_row_ratio/100)*len(df))
-    df_sampled = df.sample(n=target_row_count, random_state=42)
-    df_sampled.to_csv('{}-{}.csv'.format(target_row_count,target_row_ratio), index=False)
-
-def feature_miner():
-    df = pd.read_csv('data/features/combined_features_100meV.csv', header=0)
-
-    columns = df.columns.tolist()
-
-    # 分别去掉每一列并保存为新的文件
-    for i in range(9):
-        # 创建一个新的DataFrame，去掉第 i 列
-        df_new = df.drop(columns=[columns[i]])
-
-        # 保存为新的CSV文件，文件名为 1.csv, 2.csv, ..., 9.csv
-        df_new.to_csv(f'{i + 1}.csv', index=False)
-
-    print('Files have been created successfully!')
-from sklearn.preprocessing import MinMaxScaler
-def final_plot():
-    df = pd.read_csv('linear.csv', header=0)
-
-    # 提取三列数据
-    x = df.iloc[:, 0]  # 第一列作为横坐标
-    y = df.iloc[:, 1]  # 第二列作为纵坐标
-    size = df.iloc[:, 2]  # 第三列作为散点大小
-
-    # 对第三列进行归一化处理
-    scaler = MinMaxScaler(feature_range=(50, 100))  # 设置大小范围
-    size_normalized = scaler.fit_transform(size.values.reshape(-1, 1)).flatten()
-
-    # 绘制散点图
-    plt.figure(figsize=(8, 6))
-    plt.scatter(x, y, s=size_normalized, alpha=0.7, c='lightblue', edgecolors='w')
-
-    for i in range(len(x)):
-        plt.text(x[i], y[i], f'{size[i]:.0f}', fontsize=9, ha='right', va='bottom')
-
-    coefficients = np.polyfit(x, y, deg=1)  # 一次多项式拟合 (线性拟合)
-    slope, intercept = coefficients
-
-    # 生成拟合直线上的点
-    x_fit = np.linspace(min(x), max(x), 100)
-    y_fit = slope * x_fit + intercept
-
-    # 绘制拟合的直线
-    plt.plot(x_fit, y_fit, color='red', label=f'Fitted Line: y = {slope:.2f}x + {intercept:.2f}')
-
-    # 设置图形的标题和标签
-    plt.title('Scatter plot with size based on normalized third column')
-    plt.xlabel('First Column (X-axis)')
-    plt.ylabel('Second Column (Y-axis)')
-
-    # 显示图形
-    plt.tight_layout()
-    plt.show()
-
-def diff_search():
-    df_1  = pd.read_csv('data/features/combined_features_100meV.csv', header=0)
-    df_2  = pd.read_csv('data.csv', header=0)
-    # Extract the first column from both DataFrames
-    col_1 = df_1.iloc[:, 2]  # df_1的第三列
-    col_2 = df_2.iloc[:, 4]  # df_2的第五列
-
-    # Round the values to 8 significant digits
-    col_1_rounded = col_1.round(12)  # 对df_1的第三列取8位有效数字
-    col_2_rounded = col_2.round(12)  # 对df_2的第五列取8位有效数字
-
-    # Find the differences
-    # 在col_1中但不在col_2中的值
-    diff_in_1 = col_1_rounded[~col_1_rounded.isin(col_2_rounded)]
-
-    # 在col_2中但不在col_1中的值
-    diff_in_2 = col_2_rounded[~col_2_rounded.isin(col_1_rounded)]
-
-    # Print the differences
-    print("Values in df_1's third column (rounded to 8 digits) not in df_2's fifth column:")
-    print(diff_in_1.tolist())  # 将Series转换为列表进行打印
-
-    print("\nValues in df_2's fifth column (rounded to 8 digits) not in df_1's third column:")
-    print(diff_in_2.tolist())
-
 
 def calculate_distance_uniformity(atom_positions):
     # 计算原子之间的所有对的距离
@@ -626,6 +191,164 @@ def calculate_distance_uniformity(atom_positions):
     std_distance = np.std(distances)
 
     return mean_distance, std_distance
+
+
+def cif_reader(cif_file):
+    parser = CifParser(cif_file)
+    structure = parser.get_structures()[0]
+
+    composition = structure.composition
+    nn_finder = CrystalNN()
+
+    composition_dict = {el.symbol: composition.get_atomic_fraction(el) * composition.num_atoms
+                        for el in composition}
+    feature_list = []
+    #1
+    feature_list.append(os.path.basename(cif_file))
+    #1
+
+    ele_props = ["atomic_mass", 'atomic_radius', 'melting_point', "thermal_conductivity"]
+    for p in ele_props:
+        vals, weights = [], []
+        for sym in composition_dict:
+            elem = Element(sym)
+            if hasattr(elem, p):
+                val = getattr(elem, p)
+                if val is not None:
+                    vals.append(val)
+                    weights.append(composition_dict[sym])
+        if len(vals) > 0:
+            mean_p = np.average(vals, weights=weights)
+            std_p = np.sqrt(np.average((np.array(vals) - mean_p)**2, weights=weights))
+        else:
+            mean_p, std_p = 0, 0
+        feature_list += [mean_p, std_p]
+
+    a, b, c = structure.lattice.abc
+    alpha, beta, gamma = structure.lattice.angles
+    feature_list += [a, b, c, alpha, beta, gamma]
+    # 14
+    lattice_volume = structure.lattice.volume
+    lattice_anisotropy = max(a, b, c) / min(a, b, c)
+
+
+
+    latt = np.array(structure.lattice.matrix)
+    _, Sigma, _ = np.linalg.svd(latt)
+    max_singular_value = Sigma[0]
+
+
+    coord_nums = [
+        len(nn_finder.get_nn_info(structure, i))
+        for i in range(len(structure))
+    ]
+    mean_coord_num = np.mean(coord_nums)
+    std_coord_num = np.std(coord_nums)
+
+
+
+    atom_number = structure.num_sites
+    elements_number = len(composition.elements)
+
+    feature_list += [
+        lattice_volume, lattice_anisotropy, max_singular_value,
+        mean_coord_num, std_coord_num,atom_number, elements_number]
+
+    #21
+    density_atomic = atom_number / lattice_volume
+    magnetic_elements = [
+        "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",  # 3d 过渡金属
+        "Sc", "Ti", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",  # 可选过渡金属
+        "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb"  # 稀土元素，部分磁性
+    ]
+    magnetic_count = sum(1 for site in structure if site.specie.symbol in magnetic_elements)
+
+
+    all_mass = 0
+    up = 0
+    down = 0
+    metal_number = 0
+    non_metal_number = 0
+    cohesive_dict = cohesive_energy_loader('element_info/cohesive_energy.csv')
+    for key, value in composition_dict.items():
+        if key in cohesive_dict.keys():
+            up += cohesive_dict[key] * value
+        else:
+            up += 0
+        all_mass += mass_dict[key] * value
+        if key in metals:
+            metal_number += 1
+        else:
+            non_metal_number += 1
+        down += value
+
+    average_cohesive_energy = up / down
+
+    mass_average = all_mass / down
+
+    if non_metal_number != 0:
+        metal_non_metal = metal_number / non_metal_number
+    else:
+        metal_non_metal = 0
+
+    sga = SpacegroupAnalyzer(structure)
+    crystal_sys =sga.get_crystal_system()
+    space_group_index = sga.get_space_group_number()
+    feature_list += [density_atomic, magnetic_count, average_cohesive_energy, metal_non_metal,
+                crystal_sys, space_group_index]
+
+    #27
+
+    distances = []
+
+
+
+    coordination = structure.cart_coords
+    mean_distance, std_distance = calculate_distance_uniformity(coordination)
+
+    for m in range(len(coordination)):
+        for n in range(m + 1, len(coordination)):
+            distances.append(np.linalg.norm(coordination[m] - coordination[n]))
+    if len(distances) > 3:
+        skewness = skew(distances)
+        kurt = kurtosis(distances)
+    else:
+        skewness = kurt = 0
+
+    cutoff = 3.0  # 可根据元素类型调整，若要自动我能帮你做
+
+    coord_nums = []
+
+    for m in range(len(coordination)):
+        count = 0
+        for n in range(len(coordination)):
+            if m != n:
+                d = np.linalg.norm(coordination[m] - coordination[n])
+                if d < cutoff:
+                    count += 1
+        coord_nums.append(count)
+
+    # 平均配位数
+    avg_coordination = np.mean(coord_nums)
+
+    weights = np.array(list(composition_dict.values()), dtype=float)
+    en_values = [Element(sym).X for sym in composition_dict.keys() if Element(sym).X]
+    if len(en_values) > 1:
+        mean_en = np.average(en_values, weights=weights)
+        en_diff = np.sqrt(np.average((np.array(en_values) - mean_en) ** 2, weights=weights))
+    else:
+        mean_en, en_diff = 0, 0
+
+    # 配位数的分布均匀程度（越小越均匀）
+    coordination_uniformity = np.std(coord_nums)
+    feature_list += [mean_distance, std_distance,
+                skewness, kurt, avg_coordination, coordination_uniformity, mean_en, en_diff]
+
+    #35
+    df = pd.DataFrame([feature_list])
+    return df
+
+
 
 
 def count_3():
@@ -682,12 +405,23 @@ def variance_threshold_filter():
 
 
     plt.savefig('feature_box_plot.jpg', dpi = 400)
-import shap
-def train_rf_test():
-    df = pd.read_csv('data_12/0.10.csv')  #first line is feature name
-    X = df.iloc[:1000, :-3].values
-    y = df.iloc[:1000, -1].values
-    feature_names = df.columns[:-3]
+
+def train_shap(threshold):
+    df = pd.read_csv('encoded_latent_16.csv')  #first line is feature name
+    num_samples = min(10000, len(df))
+    sampled_idx = np.random.choice(len(df), num_samples, replace=False)
+
+    # 根据随机索引选取数据
+    X = df.iloc[sampled_idx, :-1].values
+    y = df.iloc[sampled_idx, -1].values
+
+    y = np.where(y > threshold, 'c',
+                 np.where((y > 0) & (y <= threshold), 'b', 'a'))
+
+    smote = SMOTE(random_state=42)
+    X, y = smote.fit_resample(X, y)
+
+    feature_names = list(range(1, 17))
     X_train, X_test_1, y_train, y_test_1 = train_test_split(X, y, test_size=0.2, random_state=42,stratify=y)
     X_train_1, X_val, y_train_1, y_val = train_test_split(X_train, y_train, test_size=0.25, random_state=42, stratify=y_train)
     model = RandomForestClassifier(n_estimators=100,
@@ -719,106 +453,884 @@ def train_rf_test():
     shap_values = explainer.shap_values(X_train_1)
 
 
-    print(shap_values.shape)
-    print(X_train_1.shape)
-    print(X_train.shape)
 
+    '''summary plot'''
 
     for i, class_name in enumerate(['Class a', 'Class b', 'Class c']):  # 用实际类别名称
         print(f"SHAP Summary Plot for {class_name}")
+        plt.figure(figsize=(8, 7))
+
         shap.summary_plot(shap_values[:,:,i], X_train_1, feature_names=feature_names, show = False)
-
-
         plt.xlabel("SHAP Value", fontsize=18, fontweight='bold')
         plt.ylabel("Feature", fontsize=18, fontweight='bold')
         plt.xticks(fontsize=14, fontweight='bold')
         plt.yticks(fontsize=14, fontweight='bold')
 
+        output_file_svg = f"shap_summary_plot_{class_name}.tif"
+        plt.savefig(output_file_svg, format='tif', dpi=600, bbox_inches='tight')
 
 
 
 
-        # 保存图像
-        output_file = f"shap_summary_plot_{class_name}.jpg"
-        plt.savefig(output_file, dpi=400, bbox_inches='tight')  # 高分辨率保存图片
-        plt.show()
+    '''decision plot'''
 
-    # for feature_idx in range(X_train_1.shape[1]):
-    #     if feature_idx >= shap_values[0].shape[1]:
-    #         print(f"Skipping feature {feature_names[feature_idx]} as it is out of bounds in shap_values.")
-    #         continue
-    #     print(f"Dependence plot for feature: {feature_names[feature_idx]}")
-    #     if plot_show:
-    #         shap.dependence_plot(feature_idx, shap_values[0], X_train_1, feature_names=feature_names)
+
+    #
+    # shap_values = explainer.shap_values(X_test_1)
+    # print(shap_values.shape)#shap_values 的形状通常是 (num_samples, num_features,n_classes )
+    #
+    # # 选择部分样本绘制决策图
+    # num_samples = 200  # 选择 200 个样本
+    # sample_indices = np.random.choice(X_test_1.shape[0], num_samples, replace=False)
+    # X_test_sample = X_test_1[sample_indices]
+    # y_test_sample = y_test_1[sample_indices]
+    #
+    # for i, class_name in enumerate(["Stable", "Metastable", "Unstable"]):
+    #
+    #     print(f"shap_values[{i}].shape: {shap_values[i].shape}")  # (num_samples, num_features)
+    #     print(f"len(feature_names): {len(feature_names)}")
+    #     print(explainer.expected_value.shape)
+    #
+    #
+    #
+    #     print(f"SHAP Decision Plot for {class_name}")
+    #     plt.figure(figsize=(8, 7))
+    #     shap.decision_plot(explainer.expected_value[i], shap_values[:,:,i], X_test_1,
+    #                        feature_names=feature_names, show = False)
+    #
+    #     plt.xlabel("Model Output", fontsize=18, fontweight='bold')
+    #     plt.ylabel("Samples", fontsize=18, fontweight='bold')
+    #     plt.xticks(fontsize=14, fontweight='bold')
+    #     plt.yticks(fontsize=14, fontweight='bold')
+    #
+    #     # 设置边框线宽
+    #     ax = plt.gca()
+    #     for spine in ax.spines.values():
+    #         spine.set_linewidth(3)
+    #
+    #     ax.grid(False)
+    #
+    #
+    #     output_file_jpg = f"shap_decision_plot_{class_name}.tif"
+    #     plt.savefig(output_file_jpg, format='tif', dpi=400)
+
+    #
+    #     if class_name == 'Stable':
+    #         for sample_idx in sample_indices:
+    #             shap.force_plot(explainer.expected_value[i], shap_values[sample_idx, :, i], X_test_1[sample_idx],
+    #                         feature_names=feature_names, matplotlib=True, show=False)
+    #
+    #             force_plot_filename = f"shap_force_plot_{class_name}_sample_{sample_idx}.png"
+    #             plt.savefig(force_plot_filename, format='png', dpi=400, bbox_inches='tight')
+
 
 def box_and_swarm_plot():
     df = pd.read_csv("feature_selection_results.csv")
+    print(df.columns)
 
     # 提取横纵坐标需要的列
     df['num_features'] = df['num_features'].astype(str)  # 确保横轴为类别型数据
     plt.rcParams['font.family'] = 'Arial'
     # 创建图形
-    plt.figure(figsize=(9, 8))
+    plt.figure(figsize=(16, 14))
 
     # 绘制box plot
-    sns.boxplot(x='num_features', y='accuracy', data=df, palette='coolwarm', showmeans=True, meanline=True,
-                meanprops={"color": "black", "linestyle": "--", "linewidth": 2})
+    sns.boxplot(x='num_features', y='all_feature', data=df, palette='coolwarm', showmeans=True, meanline=True,
+                meanprops={"color": "black", "linestyle": "--", "linewidth": 3})
 
     # 绘制swarm plot
-    sns.swarmplot(x='num_features', y='accuracy', data=df, color='black', alpha=0.7)
+    sns.swarmplot(x='num_features', y='all_feature', data=df, color='black', alpha=0.7)
 
     # 添加标签和标题
-    plt.xlabel("Number of Features", fontsize=22, weight='bold')
-    plt.ylabel("Accuracy", fontsize=22, weight='bold')
+    plt.xlabel("Number of Features", fontsize=36, weight='bold')
+    plt.ylabel("Accuracy", fontsize=36, weight='bold')
 
     ax = plt.gca()
     for spine in ax.spines.values():
-        spine.set_linewidth(2)
+        spine.set_linewidth(3)
     # 调整刻度字体大小
-    plt.xticks(fontsize=18)
-    plt.yticks(fontsize=18)
+    plt.xticks(fontsize=26, weight='bold')
+    plt.yticks(fontsize=26, weight='bold')
 
-    # 显示图形
-    plt.tight_layout()
-    plt.show()
+    output_file_jpg = f"box and swarm plot.tif"
+    plt.savefig(output_file_jpg, format='tif', dpi=400)
+
 
 import matplotlib.colors as mcolors
-def heat_plot():
-    # 读取 CSV 文件
-    df = pd.read_csv("model_accuracy_matrix.csv")
-    # 去掉第一列（"model_used"），并转换为 NumPy 数组以便处理
-    data = df.iloc[:, 1:].values  # 排除第一列的字符串列，提取数值
-    # 计算调整后的热图数据
-    heatmap_data = data - data.diagonal()[:, None]# 按行减去对角元素
-    # heatmap_data[heatmap_data > 0] = 1
-    heatmap_data_no_ones = np.copy(heatmap_data)  # 创建一个副本以避免修改原数据
-    # 找到除去 1 之后的最大值
-    max_val = np.max(heatmap_data_no_ones)
-    min_val = np.min(heatmap_data_no_ones)  # 找到最小值
 
-    print(min_val, max_val)# 找到最大值
-    print(heatmap_data_no_ones[11,:])
-    # 使用归一化公式将数据缩放到 [0, 1] 区间
-    normalized_data = (heatmap_data_no_ones - min_val) / (max_val - min_val)
-    # center_value = (0- min_val) / (max_val - min_val)
-    # normalized_data[normalized_data > center_value] = 1
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(
-        normalized_data,
-        cmap='coolwarm',  # 使用 coolwarm 颜色映射
-        annot=False,  # 显示数值
-        fmt=".2f",   # 格式化数值显示
 
-        xticklabels=[f"{float(i.split('_')[-1])*1000:.0f}" for i in df.columns[1:]],
-        yticklabels=[f"{float(i)*1000:.0f}" for i in df["model_used"]],
+from collections import Counter
+from math import log2
+def distribution_test():
+    values = np.arange(0, 0.31, 0.01)
+    records = []
+
+    for value in values:
+        file_name = os.path.join('data_12', f"{value:.2f}.csv")
+        df = pd.read_csv(file_name)
+        y = df.iloc[:, -1].values
+        counter = Counter(y)
+        total = len(y)
+
+        # === 计算熵 ===
+        entropy = 0
+        for count in counter.values():
+            p = count / total
+            entropy -= p * log2(p)
+
+        # === 保存比例 + 熵 ===
+        records.append({
+            "value": value,
+            "a": counter.get("a", 0) / total,
+            "b": counter.get("b", 0) / total,
+            "c": counter.get("c", 0) / total,
+            "entropy": entropy
+        })
+
+        print(f"value={value:.2f}, Entropy={entropy:.4f}")
+
+    result = pd.DataFrame(records)
+
+    # === 可选：画图 ===
+    result.set_index("value")[["a", "b", "c"]].plot(
+        kind="bar", stacked=True, figsize=(12, 6))
+    plt.ylabel("Proportion")
+    plt.title("Relative proportion of a, b, c in each file")
+    plt.legend(title="Class")
+    plt.show()
+
+    # === 保存为 CSV ===
+    result.to_csv("distribution_summary.csv", index=False)
+
+
+
+
+
+def calc_config_entropy(cif_file, anion_list=['O']):
+    """
+    计算给定 CIF 结构的构型熵 S_config
+    默认把 O 视为阴离子，其他元素为阳离子
+    """
+    # 读取结构
+    structure = Structure.from_file(cif_file)
+
+    # 统计元素个数
+    elem_counts = Counter([str(site.specie) for site in structure])
+    total_atoms = sum(elem_counts.values())
+
+    # 区分阳离子和阴离子
+    cation_counts = {el: cnt for el, cnt in elem_counts.items() if el not in anion_list}
+    anion_counts = {el: cnt for el, cnt in elem_counts.items() if el in anion_list}
+
+    # 计算摩尔分数
+    cation_total = sum(cation_counts.values())
+    anion_total = sum(anion_counts.values())
+
+    cation_x = {el: cnt / cation_total for el, cnt in cation_counts.items()}
+    anion_x = {el: cnt / anion_total for el, cnt in anion_counts.items()} if anion_total > 0 else {}
+
+    # 计算构型熵 (只考虑阳离子/阴离子分布的贡献)
+    S_cation = -R * sum(x * np.log(x) for x in cation_x.values())
+    S_anion = -R * sum(x * np.log(x) for x in anion_x.values()) if anion_x else 0.0
+
+    # 总构型熵
+    S_config = S_cation + S_anion
+
+
+
+    return S_config
+
+
+def hea_stastic():
+    # file_dict = ['oversampling', 'undersampling', 'smote', 'unbalanced']
+    file_dict = ['smote']
+
+    for i in file_dict:
+        print('xxxxxxxxxxxxxxxxxxxxxxxxxxx{}xxxxxxxxxxxxxxxxxxxxxxxxxx'.format(i))
+        file_path = 'all_threshold_prediction_'+ i+'.csv'
+        df = pd.read_csv(file_path)
+
+        vote_b_counts = df['vote_b'].value_counts().sort_index()
+
+        print("vote_b 的种类和数量：")
+        for k, v in vote_b_counts.items():
+            print(f"vote_b = {k}: {v} 个样本")
+
+        max_vote_b = df['vote_b'].max()
+        max_vote_b_rows = df[df['vote_b'] == max_vote_b]
+
+        pred_cols = [col for col in df.columns if col.startswith("pred_")]
+        pred_cols = sorted(pred_cols, key=lambda x: float(x.split("_")[1]))
+
+        def has_conflict(row):
+            preds = row[pred_cols].tolist()
+            seen_b = False
+            for p in preds:
+                if p == "b":
+                    seen_b = True
+                if seen_b and p == "c":  # 出现 b→c 反转
+                    return True
+            return False
+
+        max_vote_b_rows["conflict"] = max_vote_b_rows.apply(has_conflict, axis=1)
+        stable_rows = max_vote_b_rows[~max_vote_b_rows["conflict"]]
+
+
+
+        cif_dir = 'generated_HEOs_A1B5'
+        R = 8.314
+        entropies = []
+        for cif_id in stable_rows["id"]:
+            cif_path = os.path.join(cif_dir, f"{cif_id}")
+            S_config = calc_config_entropy(cif_path)
+            entropies.append(S_config)
+
+        stable_rows = stable_rows.copy()
+        stable_rows["S_config(J/mol·K)"] = entropies
+        stable_rows["S_config(R)"] = stable_rows["S_config(J/mol·K)"] / R
+
+        # 保存结果
+        name_col = "id"
+        stable_rows[[name_col, "vote_b", "S_config(J/mol·K)", "S_config(R)"]].to_csv(
+            f'stable_materials_{i}.csv', index=False
         )
-    # 设置标题和轴标签
+        print(f"✅ 稳定材料已保存到 stable_materials_{i}.csv")
+
+
+
+
+        stats = {}
+        for col in pred_cols:
+            counts = df[col].value_counts()
+            stats[col] = {
+            "b_count": counts.get("b", 0),
+            "c_count": counts.get("c", 0),
+            "b_ratio": counts.get("b", 0) / len(df),
+            "c_ratio": counts.get("c", 0) / len(df),
+            }
+        stats_df = pd.DataFrame(stats).T
+        stats_df.to_csv('metastbale_ratio_'+i+'.csv')
+
+        conflict_rows = []
+        for idx, row in df.iterrows():
+            preds = row[pred_cols].tolist()
+            seen_b = False
+            for p in preds:
+                if p == "b":
+                    seen_b = True
+                if seen_b and p == "c":  # 出现反转
+                    conflict_rows.append(row)
+                    break
+
+        # 转换成 DataFrame
+        conflict_df = pd.DataFrame(conflict_rows)
+        print('number of conflict materials')
+        print(len(conflict_df))
+
+    # 保存到文件（可选）
+        conflict_df.to_csv('conflict_materials_' +i +'_under.csv', index=False)
+
+
+from sklearn.manifold import TSNE
+
+from sklearn.decomposition import PCA
+
+
+def s_config_vs_prediction():
+    #读取构型熵
+    # 读取构型熵
+    df_entropy = pd.read_csv('config_entropy_results.csv')
+    # 第一列是材料名称，第三列是构型熵
+    entropy_dict = dict(zip(df_entropy.iloc[:, 0], df_entropy.iloc[:, 2]))
+
+    # 读取预测值
+    pred_dict = {}
+    df_pred = pd.read_csv('all_threshold_prediction_smote.csv')
+
+    pred_cols = [col for col in df_pred.columns if col.startswith("pred_")]
+    # 假设第19列（索引18）是预测值
+    for _, row in df_pred.iterrows():
+        first_b_col = None
+        for col in pred_cols:
+            if row[col] == "b":
+                first_b_col = col  # 保存列名
+                break
+        pred_dict[row[0]] = float(col.replace("pred_", ""))
+    # 保证键一致
+    keys = entropy_dict.keys()  # 或者 pred_dict.keys()
+
+    # 生成 DataFrame
+    df_out = pd.DataFrame({
+        'Material': list(keys),
+        'Configurational_entropy': [entropy_dict[k] for k in keys],
+        'first_b': [pred_dict[k] for k in keys]
+    })
+
+    # 保存为 CSV
+    df_out.to_csv('entropy_vs_first_b.csv', index=False)
+    print("saved to entropy_vs_first_b.csv.csv")
+from scipy.stats import ttest_ind
+
+
+
+
+
+
+
+
+
+
+def element_count(site):
+    file_name = 'stable_materials_smote_a2b5.csv'
+    total_counter = Counter()
+
+    df = pd.read_csv(file_name)
+    first_column = df.iloc[:, 0]
+    if site == 'A':
+        for entry in first_column:
+            a = entry.split(')')[0].split('(')[-1]
+            elements = re.findall(r'[A-Z][a-z]?', a)
+            total_counter.update(elements)
+    elif site == 'B':
+        for entry in first_column:
+            a = entry.split('(')[-1].split(')')[0]
+            elements = re.findall(r'[A-Z][a-z]?', a)
+
+            # 更新计数
+            total_counter.update(elements)
+
+        # 输出统计结果
+    print("元素出现次数统计：")
+    for elem, count in total_counter.most_common():
+            print(f"{elem}: {count}")
+
+
+
+
+def tsne_hea(auto_cluster, file_path, number_of_features, color, pca_before_tsne=False, pca_dim=10):
+    df = pd.read_csv(file_path)
+    y = df.iloc[:, -1].values
+
+    # ------------------- labels -------------------
+    conditions = [
+        (y == 'a'),
+        (y == 'b'),
+        (y == 'c')
+    ]
+    labels = np.select(conditions, ['a', 'b', 'c'])
+
+    feature_data = df.iloc[:, 1:number_of_features].values
+
+    # ------------------- StandardScaler -------------------
+    scaler = StandardScaler()
+    feature_data_scaled = scaler.fit_transform(feature_data)
+    feature_data = feature_data_scaled
+
+    # ------------------- Sampling -------------------
+    np.random.seed(42)
+    if feature_data.shape[0] > 10000:
+        sampled_indices = np.random.choice(feature_data.shape[0], 10000, replace=False)
+        feature_data_sampled = feature_data[sampled_indices]
+        labels_sampled = labels[sampled_indices]
+    else:
+        feature_data_sampled = feature_data
+        labels_sampled = labels
+
+    # ------------------- PCA 可选 -------------------
+    if pca_before_tsne:
+        print(f"Applying PCA → {pca_dim}D before t-SNE...")
+        pca = PCA(n_components=pca_dim, random_state=42)
+        feature_data_for_tsne = pca.fit_transform(feature_data_sampled)
+    else:
+        print("Skipping PCA. Using raw scaled features for t-SNE.")
+        feature_data_for_tsne = feature_data_sampled
+
+    df_tmp = pd.DataFrame(feature_data_for_tsne)  # 用于 t-SNE 输入
+
+    # ------------------- t-SNE -------------------
+    print("Performing t-SNE...")
+    tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+    tsne_results = tsne.fit_transform(df_tmp)
+
+    # ------------------- 保存结果 -------------------
+    tsne_df = pd.DataFrame(tsne_results, columns=['t-SNE Component 1', 't-SNE Component 2'])
+    tsne_df['Label'] = labels_sampled
+
+    # ------------------- Auto cluster -------------------
+    if auto_cluster == 'auto':
+        silhouette_scores = []
+        K = range(5, 20)
+        print("Evaluating optimal number of clusters using silhouette scores...")
+
+        for k in tqdm(K):
+            kmeans = KMeans(n_clusters=k, random_state=42, max_iter=500, tol=1e-6)
+            cluster_labels_test = kmeans.fit_predict(tsne_results)
+            silhouette_avg = silhouette_score(tsne_results, cluster_labels_test)
+            silhouette_scores.append(silhouette_avg)
+
+        optimal_k = K[np.argmax(silhouette_scores)]
+        print(f"Optimal number of clusters determined: {optimal_k}")
+    else:
+        optimal_k = 6
+
+    # ------------------- Final kmeans -------------------
+    print(f"Clustering data into {optimal_k} clusters...")
+    kmeans = KMeans(n_clusters=optimal_k, random_state=42, max_iter=500, tol=1e-6)
+    cluster_labels = kmeans.fit_predict(tsne_results)
+
+    # ------------------- CH & Silhouette -------------------
+    if len(np.unique(cluster_labels)) > 1:
+        ch_score = calinski_harabasz_score(tsne_results, cluster_labels)
+        silhouette_avg = silhouette_score(tsne_results, cluster_labels)
+        print(f"Calinski-Harabasz Score: {ch_score:.4f}")
+        print(f"Average Silhouette Score: {silhouette_avg:.4f}")
+    else:
+        ch_score = np.nan
+        silhouette_avg = np.nan
+        print("⚠️ Only one cluster. CH/Silhouette cannot be computed.")
+
+    ch = calinski_harabasz_score(feature_data, labels)
+    sil = silhouette_score(feature_data, labels)
+
+    # ------------------- Attach cluster labels -------------------
+    tsne_df['Cluster'] = cluster_labels
+
+    # ------------------- Plotting (完全保留你的原逻辑) -------------------
+    plt.figure(figsize=(9, 6))
+
     plt.rcParams['font.family'] = 'Arial'
-    plt.xlabel("Criterion used for dataset label", fontsize=22, weight='bold')
-    plt.ylabel("Model",fontsize=22, weight='bold')
+    cmap = plt.get_cmap('tab20')
+    colors = cmap(np.linspace(0, 1, len(np.unique(cluster_labels))))
+
+    # 确保坐标轴加粗（你的原逻辑）
+    ax = plt.gca()
+    ax.spines['top'].set_linewidth(1.5)
+    ax.spines['right'].set_linewidth(1.5)
+    ax.spines['bottom'].set_linewidth(1.5)
+    ax.spines['left'].set_linewidth(1.5)
+
+    label_color_map = {'a': 'red', 'b': 'blue', 'c': 'green'}
+
+    if color == '3':  # 按 label 上色
+        for label in np.unique(labels_sampled):
+            plt.scatter(
+                tsne_df.loc[tsne_df['Label'] == label, 't-SNE Component 1'],
+                tsne_df.loc[tsne_df['Label'] == label, 't-SNE Component 2'],
+                label=f'Label {label}', color=label_color_map[label]
+            )
+    else:  # 按 cluster 上色
+        for i, cluster in enumerate(np.unique(cluster_labels)):
+            plt.scatter(
+                tsne_df.loc[tsne_df['Cluster'] == cluster, 't-SNE Component 1'],
+                tsne_df.loc[tsne_df['Cluster'] == cluster, 't-SNE Component 2'],
+                label=f'Cluster {cluster+1}',
+                color=colors[i]
+            )
+
+    # cluster centers
+    cluster_centers = kmeans.cluster_centers_
+    plt.scatter(cluster_centers[:, 0], cluster_centers[:, 1],
+                marker='x', s=100, c='black', label='Cluster Centers')
+
+    plt.legend(frameon=False, prop={'weight': 'bold'}, bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.xlabel('t-SNE Component 1', weight='bold', size=18)
+    plt.ylabel('t-SNE Component 2', weight='bold', size=18)
+
     plt.tight_layout()
-    plt.savefig('model_vs_data_matrix.jpg', dpi = 300)
+
+    outname = f"tsne_of_{number_of_features}_features_PCA{pca_before_tsne}_{os.path.basename(file_path)}.jpg"
+    plt.savefig(outname, dpi=600)
+    print(f"Saved to: {outname}")
+
+    # ------------------- Cluster means -------------------
+    df_mean_calc = pd.DataFrame(feature_data_sampled)
+    df_mean_calc['Cluster'] = cluster_labels
+    cluster_means = df_mean_calc.groupby('Cluster').mean()
+
+    print("Cluster Means:")
+    print(cluster_means.to_string())
+
+    return ch_score, silhouette_avg, ch, sil
+
+
+crystal_system_dict = {
+    'Cubic': 1,
+    'cubic': 1,
+    'Orthorhombic':2,
+    'orthorhombic':2,
+    'Hexagonal':3,
+    'hexagonal':3,
+    'Tetragonal':4,
+    'tetragonal':4,
+    'Trigonal':5,
+    'trigonal':5,
+    'Triclinic':6,
+    'triclinic':6,
+    'Monoclinic':7,
+    'monoclinic':7,
+}
+
+def cif_reader(cif_file):
+    parser = CifParser(cif_file)
+    structure = parser.get_structures()[0]
+
+    composition = structure.composition
+    nn_finder = CrystalNN()
+
+    composition_dict = {el.symbol: composition.get_atomic_fraction(el) * composition.num_atoms
+                        for el in composition}
+    feature_list = []
+    #1
+    feature_list.append(os.path.basename(cif_file))
+    #1
+
+    ele_props = ["atomic_mass", 'atomic_radius', 'melting_point', "thermal_conductivity"]
+    for p in ele_props:
+        vals, weights = [], []
+        for sym in composition_dict:
+            elem = Element(sym)
+            if hasattr(elem, p):
+                val = getattr(elem, p)
+                if val is not None:
+                    vals.append(val)
+                    weights.append(composition_dict[sym])
+        if len(vals) > 0:
+            mean_p = np.average(vals, weights=weights)
+            std_p = np.sqrt(np.average((np.array(vals) - mean_p)**2, weights=weights))
+        else:
+            mean_p, std_p = 0, 0
+        feature_list += [mean_p, std_p]
+
+    a, b, c = structure.lattice.abc
+    alpha, beta, gamma = structure.lattice.angles
+    feature_list += [a, b, c, alpha, beta, gamma]
+    # 14
+    lattice_volume = structure.lattice.volume
+    lattice_anisotropy = max(a, b, c) / min(a, b, c)
+
+
+
+    latt = np.array(structure.lattice.matrix)
+    _, Sigma, _ = np.linalg.svd(latt)
+    max_singular_value = Sigma[0]
+
+
+    coord_nums = [
+        len(nn_finder.get_nn_info(structure, i))
+        for i in range(len(structure))
+    ]
+    mean_coord_num = np.mean(coord_nums)
+    std_coord_num = np.std(coord_nums)
+
+
+
+    atom_number = structure.num_sites
+    elements_number = len(composition.elements)
+
+    feature_list += [
+        lattice_volume, lattice_anisotropy, max_singular_value,
+        mean_coord_num, std_coord_num,atom_number, elements_number]
+
+    #21
+    density_atomic = atom_number / lattice_volume
+    magnetic_elements = [
+        "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",  # 3d 过渡金属
+        "Sc", "Ti", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",  # 可选过渡金属
+        "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb"  # 稀土元素，部分磁性
+    ]
+    magnetic_count = sum(1 for site in structure if site.specie.symbol in magnetic_elements)
+
+
+    all_mass = 0
+    up = 0
+    down = 0
+    metal_number = 0
+    non_metal_number = 0
+    cohesive_dict = cohesive_energy_loader('element_info/cohesive_energy.csv')
+    for key, value in composition_dict.items():
+        if key in cohesive_dict.keys():
+            up += cohesive_dict[key] * value
+        else:
+            up += 0
+        all_mass += mass_dict[key] * value
+        if key in metals:
+            metal_number += 1
+        else:
+            non_metal_number += 1
+        down += value
+
+    average_cohesive_energy = up / down
+
+    mass_average = all_mass / down
+
+    if non_metal_number != 0:
+        metal_non_metal = metal_number / non_metal_number
+    else:
+        metal_non_metal = 0
+
+    sga = SpacegroupAnalyzer(structure)
+    crystal_sys = crystal_system_dict[sga.get_crystal_system()]
+    space_group_index = sga.get_space_group_number()
+    feature_list += [density_atomic, magnetic_count, average_cohesive_energy, metal_non_metal,
+                crystal_sys, space_group_index]
+
+    #27
+
+    distances = []
+
+
+
+    coordination = structure.cart_coords
+    mean_distance, std_distance = calculate_distance_uniformity(coordination)
+
+    for m in range(len(coordination)):
+        for n in range(m + 1, len(coordination)):
+            distances.append(np.linalg.norm(coordination[m] - coordination[n]))
+    if len(distances) > 3:
+        skewness = skew(distances)
+        kurt = kurtosis(distances)
+    else:
+        skewness = kurt = 0
+
+    cutoff = 3.0  # 可根据元素类型调整，若要自动我能帮你做
+
+    coord_nums = []
+
+    for m in range(len(coordination)):
+        count = 0
+        for n in range(len(coordination)):
+            if m != n:
+                d = np.linalg.norm(coordination[m] - coordination[n])
+                if d < cutoff:
+                    count += 1
+        coord_nums.append(count)
+
+    # 平均配位数
+    avg_coordination = np.mean(coord_nums)
+
+    weights = np.array(list(composition_dict.values()), dtype=float)
+    en_values = [Element(sym).X for sym in composition_dict.keys() if Element(sym).X]
+    if len(en_values) > 1:
+        mean_en = np.average(en_values, weights=weights)
+        en_diff = np.sqrt(np.average((np.array(en_values) - mean_en) ** 2, weights=weights))
+    else:
+        mean_en, en_diff = 0, 0
+
+    # 配位数的分布均匀程度（越小越均匀）
+    coordination_uniformity = np.std(coord_nums)
+    feature_list += [mean_distance, std_distance,
+                skewness, kurt, avg_coordination, coordination_uniformity, mean_en, en_diff]
+
+    #35
+    df = pd.DataFrame([feature_list])
+    return df
+
+def compute_entropy(label_counter):
+    total = sum(label_counter.values())
+    if total == 0:
+        return 0
+    entropy = -sum((count / total) * log2(count / total) for count in label_counter.values() if count > 0)
+    return entropy
+
+from pymatgen.core import Structure
+from collections import Counter
+import numpy as np
+
+R = 8.314
+
+def calc_config_entropy(cif_file, anion_list=['O']):
+    """
+    计算给定 CIF 结构的构型熵 S_config
+    默认把 O 视为阴离子，其他元素为阳离子
+    """
+    # 读取结构
+    structure = Structure.from_file(cif_file)
+
+    # 统计元素个数
+    elem_counts = Counter([str(site.specie) for site in structure])
+    total_atoms = sum(elem_counts.values())
+
+    # 区分阳离子和阴离子
+    cation_counts = {el: cnt for el, cnt in elem_counts.items() if el not in anion_list}
+    anion_counts = {el: cnt for el, cnt in elem_counts.items() if el in anion_list}
+
+    # 计算摩尔分数
+    cation_total = sum(cation_counts.values())
+    anion_total = sum(anion_counts.values())
+
+    cation_x = {el: cnt / cation_total for el, cnt in cation_counts.items()}
+    anion_x = {el: cnt / anion_total for el, cnt in anion_counts.items()} if anion_total > 0 else {}
+
+    # 计算构型熵 (只考虑阳离子/阴离子分布的贡献)
+    S_cation = -R * sum(x * np.log(x) for x in cation_x.values())
+    S_anion = -R * sum(x * np.log(x) for x in anion_x.values()) if anion_x else 0.0
+
+    # 总构型熵
+    S_config = S_cation + S_anion
+
+
+
+    return S_config
+
+def entrophy_stastic():
+    cif_dir = 'oxides_s8'
+    a = os.listdir(cif_dir)
+
+    results = []
+    all_s = 0
+    count = 0
+
+    for i in a:
+        cif_path = os.path.join(cif_dir, i)
+        S_config = calc_config_entropy(cif_path, anion_list=['O'])
+
+        if S_config is not None:
+            results.append({
+                "cifname": i,
+                "S_config(J/mol·K)": S_config,
+                "S_config(R)": S_config / R
+            })
+            all_s += S_config
+            count += 1
+
+    avg_s = all_s / count if count > 0 else 0
+    print(f"平均构型熵 = {avg_s:.3f} J/mol·K = {avg_s/R:.3f} R")
+
+    # 保存所有结果到 CSV
+    df = pd.DataFrame(results)
+    save_file = f"ce_{cif_dir}_{avg_s/R:.3f}R.csv"
+    df.to_csv(save_file, index=False)
+    print('构型熵结果已保存')
+
+def hea_compare():
+    df_a = pd.read_csv('predict_result_5A1B_s.csv')  # 第一列：结构名，最后一列：标签
+    df_b = pd.read_csv('5A1B_s_stastic.csv')  # 第一列：结构名，最后一列：构型熵
+
+    # 统一列名（防止列名不同）
+    df_a = df_a.rename(columns={
+        df_a.columns[0]: 'structure',
+        df_a.columns[-1]: 'label'
+    })
+
+    df_b = df_b.rename(columns={
+        df_b.columns[0]: 'structure',
+        df_b.columns[2]: 'config_entropy',
+        df_b.columns[3]: 'delta_a'
+    })
+
+    # 按结构名合并
+    df = pd.merge(df_a[['structure', 'label']],
+                  df_b[['structure', 'config_entropy', 'delta_a']],
+                  on='structure',
+                  how='inner')
+
+    # 按标签顺序 a → b → c 排序
+    label_order = ['a', 'b', 'c']
+    df['label'] = pd.Categorical(df['label'], categories=label_order, ordered=True)
+    df = df.sort_values('label')
+
+    # 保存新文件
+    df.to_csv('merged_sorted_5A1B_s.csv', index=False)
+
+def get_site_cation_fractions(structure, site_elements):
+    """
+    从指定晶体位点元素中提取组成与摩尔分数
+    site_elements: list, 该位点允许的元素
+    """
+    species = [site.specie.symbol for site in structure if site.specie.symbol in site_elements]
+    counter = Counter(species)
+    total = sum(counter.values())
+    if total == 0:
+        return [], []
+    elements = list(counter.keys())
+    fractions = np.array([counter[el] / total for el in elements])
+    return elements, fractions
+
+radii_dict = {
+    # A site (CN=12)
+    "La": 1.36, "Nd": 1.27, "Sr": 1.44, "Ba": 1.61,
+    "Ca": 1.34, "Na": 1.39, "K": 1.64, "Rb": 1.72, "Cs": 1.88,
+
+    # B site (CN=6)
+    "Fe": 0.645, "Ni": 0.69, "Mn": 0.83, "Co": 0.745,
+    "Cr": 0.615, "V": 0.64, "Ti": 0.605,
+    "Zr": 0.72, "Hf": 0.71, "Sn": 0.69, "Mg": 0.72
+}
+
+
+def entropy_and_radius_mismatch_statistics(cif_dir, radii_dict,
+                                             A_elements=("La", "Nd", "Sr", "Ba", "Ca", "Na", "K", "Rb", "Cs"),
+                                             B_elements=("Fe", "Ni", "Mn", "Co", "Cr", "V", "Ti", "Zr", "Hf", "Sn", "Mg")):
+    results = []
+    all_s = 0
+    count = 0
+
+    for fname in os.listdir(cif_dir):
+        if not fname.endswith(".cif"):
+            continue
+
+        cif_path = os.path.join(cif_dir, fname)
+
+        try:
+            structure = Structure.from_file(cif_path)
+
+            # ===== 构型熵 =====
+            S_config = calc_config_entropy(cif_path, anion_list=['O'])
+
+            # ===== A 位阳离子 δ =====
+            A_sites, A_fractions = get_site_cation_fractions(structure, A_elements)
+            if len(A_sites) > 0:
+                A_radii = np.array([radii_dict[el] for el in A_sites])
+                r_bar_A = np.sum(A_fractions * A_radii)
+                delta_A = np.sqrt(np.sum(A_fractions * (1 - A_radii / r_bar_A) ** 2))
+            else:
+                delta_A, r_bar_A = np.nan, np.nan
+
+            # ===== B 位阳离子 δ =====
+            B_sites, B_fractions = get_site_cation_fractions(structure, B_elements)
+            if len(B_sites) > 0:
+                B_radii = np.array([radii_dict[el] for el in B_sites])
+                r_bar_B = np.sum(B_fractions * B_radii)
+                delta_B = np.sqrt(np.sum(B_fractions * (1 - B_radii / r_bar_B) ** 2))
+            else:
+                delta_B, r_bar_B = np.nan, np.nan
+
+        except Exception as e:
+            print(f"Skip {fname}: {e}")
+            continue
+
+        if S_config is not None:
+            results.append({
+                "cif_name": fname,
+                "S_config_J_per_molK": S_config,
+                "S_config_R": S_config / R,
+                "delta_A_radius": delta_A,
+                "delta_B_radius": delta_B,
+                "mean_A_cation_radius": r_bar_A,
+                "mean_B_cation_radius": r_bar_B,
+                "num_A_cation_species": len(A_sites),
+                "num_B_cation_species": len(B_sites)
+            })
+            all_s += S_config
+            count += 1
+
+    avg_s = all_s / count if count > 0 else 0
+    avg_s_R = avg_s / R
+    print(f"平均构型熵 = {avg_s:.3f} J/mol·K = {avg_s_R:.3f} R")
+
+    df = pd.DataFrame(results)
+    output_csv = f"{cif_dir}_stastic.csv"
+    df.to_csv(output_csv, index=False)
+    print(f"结果已保存至 {output_csv}")
+
+def heo_feature_select():
+    '5A1B_s.csv'
 
 
 if __name__ == '__main__':
-    train_rf_test()
+    # entropy_and_radius_mismatch_statistics(
+    #     '5A1B_r',
+    #     radii_dict)
+    hea_compare()
+
+
